@@ -3775,15 +3775,11 @@
         {
             "name": "phpstan/phpstan",
             "version": "2.3.7",
-            "source": {
-                "type": "",
-                "url": "",
-                "reference": ""
-            },
             "dist": {
-                "type": "path",
-                "url": "/tmp/claude-0/phpstan-src",
-                "reference": "90c91c2498849ab8cc4e873864bbf1cb2bf6ea12"
+                "type": "zip",
+                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/90c91c2498849ab8cc4e873864bbf1cb2bf6ea12",
+                "reference": "90c91c2498849ab8cc4e873864bbf1cb2bf6ea12",
+                "shasum": ""
             },
             "require": {
                 "php": "^7.4|^8.0"
@@ -3801,6 +3797,7 @@
                     "bootstrap.php"
                 ]
             },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "MIT"
             ],
@@ -3821,16 +3818,23 @@
                 "static analysis"
             ],
             "support": {
-                "issues": "https://github.com/phpstan/phpstan/issues",
-                "forum": "https://github.com/phpstan/phpstan/discussions",
-                "source": "https://github.com/phpstan/phpstan-src",
                 "docs": "https://phpstan.org/user-guide/getting-started",
-                "security": "https://github.com/phpstan/phpstan/security/policy"
+                "forum": "https://github.com/phpstan/phpstan/discussions",
+                "issues": "https://github.com/phpstan/phpstan/issues",
+                "security": "https://github.com/phpstan/phpstan/security/policy",
+                "source": "https://github.com/phpstan/phpstan-src"
             },
-            "transport-options": {
-                "symlink": false,
-                "relative": false
-            }
+            "funding": [
+                {
+                    "url": "https://github.com/ondrejmirtes",
+                    "type": "github"
+                },
+                {
+                    "url": "https://github.com/phpstan",
+                    "type": "github"
+                }
+            ],
+            "time": "2026-11-19T10:31:11+00:00"
         },
         {
             "name": "phpunit/php-code-coverage",
