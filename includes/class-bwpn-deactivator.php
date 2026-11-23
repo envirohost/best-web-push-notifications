@@ -1,37 +1,26 @@
 <?php
-
 /**
- * Fired during plugin deactivation
+ * Deactivation routine.
  *
- * @link       https://github.com/rwngallego
- * @since      1.0.0
- *
- * @package    BWPN
- * @subpackage BWPN/includes
+ * @package BWPN
  */
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
- * Fired during plugin deactivation.
- *
- * This class defines all code necessary to run during the plugin's deactivation.
- *
- * @since      1.0.0
- * @package    BWPN
- * @subpackage BWPN/includes
- * @author     Rowinson Gallego <rwn.gallego@gmail.com>
+ * Runs on plugin deactivation. Data is kept: subscribers and keys survive a
+ * deactivate/activate cycle. Pending jobs are rescheduled by the watchdog
+ * after reactivation.
  */
 class BWPN_Deactivator {
 
 	/**
-	 * Short Description. (use period)
-	 *
-	 * Long Description.
-	 *
-	 * @since    1.0.0
+	 * Clears scheduled events and transient notices.
 	 */
 	public static function deactivate() {
-		BWPN_Lib_Utils::clean_messages();
-		delete_option( 'bwpn_activated' );
+		BWPN_Cron::clear_all();
+		BWPN_Notices::clear();
 	}
-
 }

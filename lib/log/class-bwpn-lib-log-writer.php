@@ -1,16 +1,25 @@
 <?php
+/**
+ * Log writer interface.
+ *
+ * @package BWPN
+ */
 
-/***
- * Writer interface
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * A destination for log lines.
  */
 interface BWPN_Lib_Log_Writer {
+
 	/**
-	 * Write a log message
+	 * Writes one line.
 	 *
-	 * @param string $level Error Level.
-	 * @param string $message Message to log.
-	 *
+	 * @param string $level   Level name.
+	 * @param string $message Message.
 	 * @return mixed
 	 */
-	public function write ( $level, $message );
+	public function write( $level, $message );
 }

@@ -1,26 +1,28 @@
 <?php
+/**
+ * Database log writer.
+ *
+ * @package BWPN
+ */
 
-/***
- * Log writer that uses the DB
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Writes logs to the plugin's log table (viewable under Logs). Old entries
+ * are removed by the daily maintenance event, not on every request.
  */
 class BWPN_Lib_Log_Db implements BWPN_Lib_Log_Writer {
 
 	/**
-	 * Insert a log entry in the DB
+	 * Writes one line.
 	 *
-	 * @param string $level Level code.
-	 * @param string $message Message to log.
+	 * @param string $level   Level.
+	 * @param string $message Message.
+	 * @return bool
 	 */
 	public function write( $level, $message ) {
 		return BWPN_Lib_Db::insert_log( $level, $message );
-	}
-
-	/**
-	 * Delete the logs older than the number of days
-	 *
-	 * @param int $days Number of days
-	 */
-	public function delete_old_logs( $days ) {
-		BWPN_Lib_Db::delete_old_logs( $days );
 	}
 }

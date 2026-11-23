@@ -1,143 +1,136 @@
 <?php
+/**
+ * Logger.
+ *
+ * @package BWPN
+ */
 
-/***
- * Logger
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Minimal levelled logger with pluggable writers (PHP error_log or the
+ * plugin's log table).
  */
 class BWPN_Lib_Log {
+
 	public const DEBUG   = 0;
 	public const INFO    = 1;
 	public const WARNING = 2;
 	public const ERROR   = 3;
 
-	private static $writer;
-	private static $enabled = true;
-	private static $level   = self::ERROR;
+	/**
+	 * Active writer.
+	 *
+	 * @var BWPN_Lib_Log_Writer|null
+	 */
+	private static $writer = null;
 
 	/**
-	 * Sets the Log writer
+	 * Minimum level written.
 	 *
-	 * @param BWPN_Lib_Log_Writer $writer
-	 * @param int                          $level Error level
+	 * @var int
+	 */
+	private static $level = self::ERROR;
+
+	/**
+	 * Configures the logger from the settings.
+	 */
+	public static function bootstrap() {
+		$writer = 'db' === BWPN_Settings::str( 'log_driver' ) ? new BWPN_Lib_Log_Db() : new BWPN_Lib_Log_ErrorLog();
+		self::init( $writer, self::string_to_level( BWPN_Settings::str( 'log_level' ) ) );
+	}
+
+	/**
+	 * Sets the writer and level.
+	 *
+	 * @param BWPN_Lib_Log_Writer $writer Writer.
+	 * @param int                 $level  Minimum level.
 	 */
 	public static function init( BWPN_Lib_Log_Writer $writer, $level = self::ERROR ) {
 		self::$writer = $writer;
-		self::$level  = $level;
+		self::$level  = (int) $level;
 	}
 
 	/**
-	 * Enable the logger
-	 */
-	public static function enable() {
-		self::$enabled = true;
-	}
-
-	/**
-	 * Disable the logger
-	 */
-	public static function disable() {
-		self::$enabled = false;
-	}
-
-	/**
-	 * Logs a debug message
+	 * Logs a debug message.
 	 *
-	 * @param string $message Message to log.
+	 * @param string $message Message.
 	 */
 	public static function debug( $message ) {
-		if ( ! self::$enabled || self::$level > self::DEBUG ) {
-			return;
-		}
-		self::$writer->write( self::level_to_string( self::DEBUG ), $message );
+		self::write( self::DEBUG, $message );
 	}
 
 	/**
-	 * Logs a info message
+	 * Logs an info message.
 	 *
-	 * @param string $message Message to log.
+	 * @param string $message Message.
 	 */
 	public static function info( $message ) {
-		if ( ! self::$enabled || self::$level > self::INFO ) {
-			return;
-		}
-		self::$writer->write( self::level_to_string( self::INFO ), $message );
+		self::write( self::INFO, $message );
 	}
 
 	/**
-	 * Logs a warning message
+	 * Logs a warning.
 	 *
-	 * @param string $message Message to log.
+	 * @param string $message Message.
 	 */
 	public static function warning( $message ) {
-		if ( ! self::$enabled || self::$level > self::WARNING ) {
-			return;
-		}
-		self::$writer->write( self::level_to_string( self::WARNING ), $message );
+		self::write( self::WARNING, $message );
 	}
 
 	/**
-	 * Logs an error message
+	 * Logs an error.
 	 *
-	 * @param string $message Message to log.
+	 * @param string $message Message.
 	 */
 	public static function error( $message ) {
-		if ( ! self::$enabled || self::$level > self::ERROR ) {
+		self::write( self::ERROR, $message );
+	}
+
+	/**
+	 * Writes a message if the level is enabled.
+	 *
+	 * @param int    $level   Level.
+	 * @param string $message Message.
+	 */
+	private static function write( $level, $message ) {
+		if ( null === self::$writer || $level < self::$level ) {
 			return;
 		}
-		self::$writer->write( self::level_to_string( self::ERROR ), $message );
+		self::$writer->write( self::level_to_string( $level ), (string) $message );
 	}
 
 	/**
-	 * Get the string from the level code
+	 * Level code to string.
 	 *
-	 * @param $level int Level code.
-	 *
+	 * @param int $level Level.
 	 * @return string
-	 * @since 1.3.3
 	 */
-	private static function level_to_string( $level ) {
-		$string = '';
-		switch ( $level ) {
-			case self::DEBUG:
-				$string = 'debug';
-				break;
-			case self::INFO:
-				$string = 'info';
-				break;
-			case self::WARNING:
-				$string = 'warning';
-				break;
-			case self::ERROR:
-				$string = 'error';
-				break;
-			default:
-				break;
-		}
-		return $string;
+	public static function level_to_string( $level ) {
+		$map = array(
+			self::DEBUG   => 'debug',
+			self::INFO    => 'info',
+			self::WARNING => 'warning',
+			self::ERROR   => 'error',
+		);
+		return $map[ $level ] ?? 'error';
 	}
 
 	/**
-	 * Get the level code from the string
+	 * String to level code.
 	 *
-	 * @param $level_string string Level string.
-	 *
+	 * @param string $level_string Level name.
 	 * @return int
-	 * @since 1.6.0
 	 */
 	public static function string_to_level( $level_string ) {
-		$level = self::ERROR;
-		switch ( $level_string ) {
-			case 'debug':
-				$level = self::DEBUG;
-				break;
-			case 'info':
-				$level = self::INFO;
-				break;
-			case 'warning':
-				$level = self::WARNING;
-				break;
-			default:
-				break;
-		}
-		return $level;
+		$map = array(
+			'debug'   => self::DEBUG,
+			'info'    => self::INFO,
+			'warning' => self::WARNING,
+			'error'   => self::ERROR,
+		);
+		return $map[ $level_string ] ?? self::ERROR;
 	}
 }

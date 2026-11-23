@@ -1,101 +1,76 @@
 <?php
 /**
- * The plugin bootstrap file
+ * Best Web Push Notifications
  *
- * This file is read by WordPress to generate the plugin information in the plugin
- * admin area. This file also includes all of the dependencies used by the plugin,
- * registers the activation and deactivation functions, and defines a function
- * that starts the plugin.
+ * Self-hosted web push notifications for WordPress. Forked from
+ * Perfecty Push Notifications by Rowinson Gallego (Perfecty).
  *
- * @link              https://github.com/rwngallego
- * @since             1.0.0
  * @package           BWPN
+ * @copyright         2020-2025 Rowinson Gallego (Perfecty Push Notifications)
+ * @copyright         2026 Best Web Push Notifications contributors
+ * @license           GPL-2.0-or-later
  *
  * @wordpress-plugin
  * Plugin Name:       Best Web Push Notifications
- * Plugin URI:        https://wordpress.org/plugins/best-web-push-notifications
- * Description:       Self-hosted, Open Source and powerful <strong>Web Push Notifications</strong> plugin to send push notifications <strong>from your own server for free!</strong>
- * Version:           1.6.5
- * Author:            Perfecty
- * Author URI:        https://perfecty.org
- * License:           GPL-2.0+
- * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
+ * Plugin URI:        https://github.com/__GITHUB_OWNER__/best-web-push-notifications
+ * Description:       Self-hosted web push notifications. VAPID keys and subscribers stay on your own server - no SaaS. Forked from Perfecty Push Notifications by Rowinson Gallego (Perfecty).
+ * Version:           2.0.0
+ * Requires at least: 6.6
+ * Requires PHP:      8.2
+ * Author:            Best Web Push Notifications contributors
+ * Author URI:        https://github.com/__GITHUB_OWNER__/best-web-push-notifications
+ * License:           GPL-2.0-or-later
+ * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       best-web-push-notifications
  * Domain Path:       /languages
+ * Update URI:        https://github.com/__GITHUB_OWNER__/best-web-push-notifications
  */
 
-// If this file is called directly, abort.
-if ( ! defined( 'WPINC' ) ) {
-	die;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-/**
- * Currently plugin version.
- * Start at version 1.0.0 and use SemVer - https://semver.org
- * Rename this for your plugin and update it as you release new versions.
- */
-define( 'BWPN_VERSION', '1.6.5' );
-
-/**
- * DB Version of the plugin
- */
-define( 'BWPN_DB_VERSION', 6 );
-
-/**
- * The basename of the plugin
- */
+define( 'BWPN_VERSION', '2.0.0' );
+define( 'BWPN_DB_VERSION', 1 );
+define( 'BWPN_FILE', __FILE__ );
+define( 'BWPN_PATH', plugin_dir_path( __FILE__ ) );
+define( 'BWPN_URL', plugin_dir_url( __FILE__ ) );
 define( 'BWPN_BASENAME', plugin_basename( __FILE__ ) );
+define( 'BWPN_MIN_PHP', '8.2' );
 
-/**
- * The code that runs during the plugin activation.
- * This action is documented in includes/class-bwpn-activator.php
- */
-function activate_bwpn() {
-	require_once plugin_dir_path( __FILE__ ) . 'includes/class-bwpn-activator.php';
-	BWPN_Activator::activate();
+if ( version_compare( PHP_VERSION, BWPN_MIN_PHP, '<' ) ) {
+	add_action(
+		'admin_notices',
+		static function () {
+			printf(
+				'<div class="notice notice-error"><p>%s</p></div>',
+				esc_html(
+					sprintf(
+						/* translators: 1: required PHP version, 2: current PHP version. */
+						__( 'Best Web Push Notifications requires PHP %1$s or newer. This site runs PHP %2$s, so the plugin is inactive.', 'best-web-push-notifications' ),
+						BWPN_MIN_PHP,
+						PHP_VERSION
+					)
+				)
+			);
+		}
+	);
+	return;
 }
 
-/**
- * The code that runs during plugin deactivation.
- * This action is documented in includes/class-bwpn-deactivator.php
- */
-function deactivate_bwpn() {
-	require_once plugin_dir_path( __FILE__ ) . 'includes/class-bwpn-deactivator.php';
-	BWPN_Deactivator::deactivate();
-}
+require_once BWPN_PATH . 'includes/class-bwpn-plugin.php';
 
-register_activation_hook( __FILE__, 'activate_bwpn' );
-register_deactivation_hook( __FILE__, 'deactivate_bwpn' );
+BWPN_Plugin::load_files();
 
-/**
- * The core plugin class that is used to define internationalization,
- * admin-specific hooks, and public-facing site hooks.
+/*
+ * The service worker and the web app manifest are answered as early as
+ * possible, before other plugins get a chance to redirect the request
+ * (language plugins, canonical redirects), because a service worker script
+ * that redirects fails to install.
  */
-require plugin_dir_path( __FILE__ ) . 'includes/class-bwpn.php';
+BWPN_Service_Worker::maybe_serve_early();
 
-/**
- * We load the dependencies and check for the gmp extension
- */
-require plugin_dir_path( __FILE__ ) . 'lib/class-bwpn-lib-utils.php';
-if ( version_compare( PHP_VERSION, '7.2.0', '>=' ) ) {
-	BWPN_Lib_Utils::check_gmp();
-} else {
-	error_log( sprintf( 'Wrong PHP version: %s', PHP_VERSION ) );
-	BWPN_Lib_Utils::show_message( esc_html( 'Best Web Push requires PHP >= 7.2.0', 'best-web-push-notifications' ), 'error' );
-	BWPN_Lib_Utils::disable();
-}
+register_activation_hook( __FILE__, array( 'BWPN_Activator', 'activate' ) );
+register_deactivation_hook( __FILE__, array( 'BWPN_Deactivator', 'deactivate' ) );
 
-/**
- * Begins execution of the plugin.
- *
- * Since everything within the plugin is registered via hooks,
- * then kicking off the plugin from this point in the file does
- * not affect the page life cycle.
- *
- * @since    1.0.0
- */
-function run_bwpn() {
-	$plugin = new BWPN();
-	$plugin->run();
-}
-run_bwpn();
+BWPN_Plugin::instance()->run();

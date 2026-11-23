@@ -1,77 +1,62 @@
 <?php
-
 /**
- * Fired during plugin activation
+ * Activation routine.
  *
- * @link       https://github.com/rwngallego
- * @since      1.0.0
- *
- * @package    BWPN
- * @subpackage BWPN/includes
+ * @package BWPN
  */
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
- * Fired during plugin activation.
- *
- * This class defines all code necessary to run during the plugin's activation.
- *
- * @since      1.0.0
- * @package    BWPN
- * @subpackage BWPN/includes
- * @author     Rowinson Gallego <rwn.gallego@gmail.com>
+ * Runs on plugin activation.
  */
 class BWPN_Activator {
 
 	/**
-	 * Short Description. (use period)
+	 * Creates tables, imports Perfecty data when present, makes sure VAPID
+	 * keys exist and schedules the background events.
 	 *
-	 * Long Description.
-	 *
-	 * @since    1.0.0
+	 * The Perfecty import runs before key generation so that an existing
+	 * Perfecty key pair (and every subscriber bound to it) is adopted rather
+	 * than replaced by a fresh pair.
 	 */
 	public static function activate() {
 		BWPN_Lib_Db::db_create();
-		self::default_options();
+
+		$fresh_install = ! BWPN_Settings::exists();
+		if ( $fresh_install ) {
+			add_option( BWPN_Settings::OPTION, BWPN_Settings::defaults(), '', true );
+		}
+
+		if ( BWPN_Migrator::should_run() ) {
+			BWPN_Migrator::run();
+		}
+
+		self::ensure_keys();
+
+		update_option( 'bwpn_version', BWPN_VERSION, true );
+		BWPN_Cron::schedule_recurring();
 	}
 
-	private static function default_options() {
-		// Verifies if we already have both the vapid_public_key and vapid_private_key
-		// If we don't, we generate them and save them
-		$options = get_option( 'bwpn_settings', array() );
-		if ( empty( $options['vapid_public_key'] ) && empty( $options['vapid_private_key'] ) && BWPN_Lib_Utils::is_enabled() ) {
-			$vapidKeys                    = BWPN_Lib_Push_Server::create_vapid_keys();
-			$options['vapid_public_key']  = $vapidKeys['publicKey'];
-			$options['vapid_private_key'] = $vapidKeys['privateKey'];
+	/**
+	 * Generates a VAPID key pair if none exists.
+	 *
+	 * @return bool True if keys exist after the call.
+	 */
+	public static function ensure_keys() {
+		if ( BWPN_Settings::has_keys() ) {
+			return true;
 		}
-		if ( empty( $options['batch_size'] ) ) {
-			$options['batch_size'] = BWPN_Lib_Push_Server::DEFAULT_BATCH_SIZE;
+		try {
+			$keys = BWPN_External_Webpush::create_vapid_keys();
+		} catch ( Throwable $e ) {
+			BWPN_Lib_Log::error( 'Could not generate the VAPID keys: ' . $e->getMessage() );
+			BWPN_Notices::add( 'keys_generation_failed' );
+			return false;
 		}
-		if ( empty( $options['parallel_flushing_size'] ) ) {
-			$options['parallel_flushing_size'] = BWPN_Lib_Push_Server::DEFAULT_PARALLEL_FLUSHING_SIZE;
-		}
-		if ( empty( $options['service_worker_scope'] ) ) {
-			$options['service_worker_scope'] = '/bwpn/push/';
-		}
-		if ( ! isset( $options['widget_enabled'] ) ) {
-			$options['widget_enabled'] = 1;
-		}
-		if ( ! isset( $options['settings_send_welcome_message'] ) ) {
-			$options['settings_send_welcome_message'] = 1;
-		}
-		if ( empty( $options['notifications_default_icon'] ) && get_option( 'site_icon' ) ) {
-			// if the default icon is not set, we fallback to the site_icon.
-			$options['notifications_default_icon'] = get_option( 'site_icon' );
-		}
-
-		if ( get_option( 'bwpn_settings' ) == false ) {
-			if ( ! add_option( 'bwpn_settings', $options ) ) {
-				error_log( 'Could not set the default options' );
-			}
-		} else {
-			update_option( 'bwpn_settings', $options );
-		}
-
-		add_option( 'bwpn_activated', 1 );
+		BWPN_Lib_Log::info( 'VAPID keys were created' );
+		return BWPN_Settings::set_keys( $keys['publicKey'], $keys['privateKey'] );
 	}
-
 }

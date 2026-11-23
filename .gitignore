@@ -1,7 +1,8 @@
 /vendor/
-.idea
-.gradle
-out/
-dist/
-public/js/perfecty-push-sdk/
+/vendor-prefixed/
+/node_modules/
+sdk/node_modules/
 /.phpunit.result.cache
+/dist/
+*.zip
+.idea

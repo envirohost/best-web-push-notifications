@@ -1,838 +1,842 @@
 <?php
+/**
+ * Database access layer.
+ *
+ * @package BWPN
+ */
 
-use BWPN_External_Uuid as Uuid;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
 
-/***
- * DB library
+/**
+ * All SQL lives here. Every query is prepared; table names use the %i
+ * identifier placeholder. All datetimes are stored in UTC and computed in
+ * PHP, never with MySQL NOW() or CURRENT_TIMESTAMP, so the database server's
+ * timezone cannot shift schedules (upstream issues #158 and #190).
+ *
+ * phpcs:disable WordPress.DB.DirectDatabaseQuery -- custom tables; caching would show stale counters.
  */
 class BWPN_Lib_Db {
 
-	private static $allowed_users_fields         = 'id,uuid,wp_user_id,endpoint,key_auth,key_p256dh,remote_ip,created_at';
-	private static $allowed_notifications_fields = 'id,payload,total,succeeded,failed,last_cursor,batch_size,status,is_taken,created_at,finished_at,last_execution_at,scheduled_at';
-	private static $allowed_logs_fields          = 'level,message,created_at';
+	public const STATUS_SCHEDULED = 'scheduled';
+	public const STATUS_RUNNING   = 'running';
+	public const STATUS_CANCELED  = 'canceled';
+	public const STATUS_FAILED    = 'failed';
+	public const STATUS_COMPLETED = 'completed';
 
-	public const NOTIFICATIONS_STATUS_SCHEDULED = 'scheduled';
-	public const NOTIFICATIONS_STATUS_RUNNING   = 'running';
-	public const NOTIFICATIONS_STATUS_CANCELED  = 'canceled';
-	public const NOTIFICATIONS_STATUS_FAILED    = 'failed';
-	public const NOTIFICATIONS_STATUS_COMPLETED = 'completed';
+	private const SUBSCRIBER_FIELDS   = array( 'id', 'uuid', 'wp_user_id', 'endpoint', 'endpoint_hash', 'key_p256dh', 'key_auth', 'content_encoding', 'source', 'failure_count', 'created_at', 'updated_at', 'last_success_at' );
+	private const NOTIFICATION_FIELDS = array( 'id', 'payload', 'source', 'post_id', 'status', 'total', 'succeeded', 'failed', 'expired', 'last_cursor', 'batch_size', 'is_taken', 'taken_at', 'attempts', 'last_error', 'created_at', 'scheduled_at', 'last_execution_at', 'finished_at' );
 
-	private static function with_prefix( $table ) {
+	/* ---------------------------------------------------------------------
+	 * Schema
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Subscribers table name.
+	 *
+	 * @return string
+	 */
+	public static function subscribers_table() {
 		global $wpdb;
-		return $wpdb->prefix . $table;
-	}
-
-	private static function users_table() {
-		return self::with_prefix( 'bwpn_users' );
-	}
-
-	private static function notifications_table() {
-		return self::with_prefix( 'bwpn_notifications' );
-	}
-
-	private static function logs_table() {
-		return self::with_prefix( 'bwpn_logs' );
+		return $wpdb->prefix . 'bwpn_subscribers';
 	}
 
 	/**
-	 * Creates the tables in the WordPress DB and register the DB version
+	 * Notifications table name.
+	 *
+	 * @return string
+	 */
+	public static function notifications_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'bwpn_notifications';
+	}
+
+	/**
+	 * Logs table name.
+	 *
+	 * @return string
+	 */
+	public static function logs_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'bwpn_logs';
+	}
+
+	/**
+	 * Current UTC datetime for the database.
+	 *
+	 * @param int|null $timestamp Unix timestamp, defaults to now.
+	 * @return string
+	 */
+	public static function now( $timestamp = null ) {
+		return gmdate( 'Y-m-d H:i:s', null === $timestamp ? time() : (int) $timestamp );
+	}
+
+	/**
+	 * Creates or upgrades the tables.
 	 */
 	public static function db_create() {
 		global $wpdb;
-
-		$db_version = get_option( 'bwpn_db_version' );
-
-		// We need this for dbDelta() to work
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
-		$charset             = $wpdb->get_charset_collate();
-		$user_table          = self::users_table();
-		$notifications_table = self::notifications_table();
-		$logs_table          = self::logs_table();
+		$charset       = $wpdb->get_charset_collate();
+		$subscribers   = self::subscribers_table();
+		$notifications = self::notifications_table();
+		$logs          = self::logs_table();
 
-		// We execute the queries per table
-		$sql = "CREATE TABLE $user_table (
-          id int(11) NOT NULL AUTO_INCREMENT,
-          wp_user_id int(11) NULL,
-          uuid char(36) NOT NULL,
-          remote_ip varchar(46) DEFAULT '',
-          endpoint varchar(500) NOT NULL,
-          key_auth varchar(100) NOT NULL UNIQUE,
-          key_p256dh varchar(100) NOT NULL UNIQUE,
-          created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          PRIMARY KEY  (id),
-          UNIQUE KEY users_uuid_uk (uuid)
-        ) $charset;";
-		dbDelta( $sql );
+		dbDelta(
+			"CREATE TABLE $subscribers (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  uuid char(36) NOT NULL,
+  wp_user_id bigint(20) unsigned NULL,
+  endpoint varchar(2048) NOT NULL,
+  endpoint_hash char(64) NOT NULL,
+  key_p256dh varchar(128) NOT NULL,
+  key_auth varchar(64) NOT NULL,
+  content_encoding varchar(16) NOT NULL DEFAULT 'aes128gcm',
+  source varchar(20) NOT NULL DEFAULT 'subscribe',
+  failure_count smallint(5) unsigned NOT NULL DEFAULT 0,
+  created_at datetime NOT NULL,
+  updated_at datetime NULL,
+  last_success_at datetime NULL,
+  PRIMARY KEY  (id),
+  UNIQUE KEY uuid (uuid),
+  UNIQUE KEY endpoint_hash (endpoint_hash),
+  KEY wp_user_id (wp_user_id)
+) $charset;"
+		);
 
-		$sql = "CREATE TABLE $notifications_table (
-          id int(11) NOT NULL AUTO_INCREMENT,
-          payload varchar(2000) NOT NULL,
-          total int(11) DEFAULT 0 NOT NULL,
-          succeeded int(11) DEFAULT 0 NOT NULL,
-          failed int(11) DEFAULT 0 NOT NULL,
-          last_cursor int(11) DEFAULT 0 NOT NULL,
-          batch_size int(11) DEFAULT 0 NOT NULL,
-          status varchar(15) DEFAULT 'scheduled' NOT NULL,
-          is_taken tinyint(1) DEFAULT 0 NOT NULL,
-          created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          last_execution_at datetime NULL,
-          scheduled_at datetime NULL,
-          finished_at datetime NULL,
-          PRIMARY KEY  (id)
-        ) $charset;";
-		dbDelta( $sql );
+		dbDelta(
+			"CREATE TABLE $notifications (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  payload text NOT NULL,
+  source varchar(20) NOT NULL DEFAULT 'manual',
+  post_id bigint(20) unsigned NULL,
+  status varchar(15) NOT NULL DEFAULT 'scheduled',
+  total int(10) unsigned NOT NULL DEFAULT 0,
+  succeeded int(10) unsigned NOT NULL DEFAULT 0,
+  failed int(10) unsigned NOT NULL DEFAULT 0,
+  expired int(10) unsigned NOT NULL DEFAULT 0,
+  last_cursor bigint(20) unsigned NOT NULL DEFAULT 0,
+  batch_size int(10) unsigned NOT NULL DEFAULT 0,
+  is_taken tinyint(1) NOT NULL DEFAULT 0,
+  taken_at datetime NULL,
+  attempts smallint(5) unsigned NOT NULL DEFAULT 0,
+  last_error varchar(255) NOT NULL DEFAULT '',
+  created_at datetime NOT NULL,
+  scheduled_at datetime NULL,
+  last_execution_at datetime NULL,
+  finished_at datetime NULL,
+  PRIMARY KEY  (id),
+  KEY status (status),
+  KEY post_id (post_id)
+) $charset;"
+		);
 
-		$sql = "CREATE TABLE $logs_table (
-          level varchar(10) DEFAULT 'debug',
-          message varchar(2000) NOT NULL,
-          created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL
-        ) $charset;";
-		dbDelta( $sql );
+		dbDelta(
+			"CREATE TABLE $logs (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  level varchar(10) NOT NULL DEFAULT 'debug',
+  message text NOT NULL,
+  created_at datetime NOT NULL,
+  PRIMARY KEY  (id),
+  KEY created_at (created_at)
+) $charset;"
+		);
 
-		if ( $db_version != BWPN_DB_VERSION ) {
-			if ( $db_version == 1 ) {
-				// manual: dbDelta doesn't drop indexes
-				if ( $wpdb->get_var( "SHOW INDEX FROM $user_table WHERE Key_name='users_endpoint_uk'" ) !== null ) {
-					$wpdb->query( "ALTER TABLE $user_table DROP INDEX users_endpoint_uk" );
-				}
-				if ( $wpdb->get_var( "SHOW INDEX FROM $user_table WHERE Key_name='endpoint'" ) !== null ) {
-					$wpdb->query( "ALTER TABLE $user_table DROP INDEX endpoint" );
-				}
-			}
-			if ( $db_version == 5 ) {
-				// the counters have been adjusted, we migrate the old stats
-				$wpdb->query( "UPDATE $notifications_table SET failed = total - succeeded" );
-			}
-
-			update_option( 'bwpn_db_version', BWPN_DB_VERSION );
-		}
+		update_option( 'bwpn_db_version', BWPN_DB_VERSION, true );
 	}
 
 	/**
-	 * Check that the database tables exist
+	 * Whether the tables exist.
 	 *
 	 * @return bool
 	 */
 	public static function has_tables() {
 		global $wpdb;
-
-		return $wpdb->get_var( "SHOW TABLES LIKE '" . self::users_table() . "'" ) &&
-			$wpdb->get_var( "SHOW TABLES LIKE '" . self::notifications_table() . "'" );
-	}
-
-	/**
-	 * Store the user in the DB
-	 *
-	 * @param $endpoint
-	 * @param $key_auth
-	 * @param $key_p256dh
-	 * @param $remote_ip
-	 * @param $wp_user_id
-	 *
-	 * @return $uuid The id for the created user or false
-	 * @throws Exception
-	 */
-	public static function create_user( $endpoint, $key_auth, $key_p256dh, $remote_ip, $wp_user_id = null ) {
-		global $wpdb;
-
-		$uuid   = Uuid::uuid4()->toString();
-		$result = $wpdb->insert(
-			self::users_table(),
-			array(
-				'uuid'       => $uuid,
-				'endpoint'   => $endpoint,
-				'key_auth'   => $key_auth,
-				'key_p256dh' => $key_p256dh,
-				'remote_ip'  => $remote_ip,
-				'wp_user_id' => $wp_user_id,
-			)
-		);
-
-		if ( $result === false ) {
-			error_log( "Could not create the user: $uuid" );
-			return false;
+		foreach ( array( self::subscribers_table(), self::notifications_table() ) as $table ) {
+			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) ) !== $table ) {
+				return false;
+			}
 		}
-
-		$inserted_id = $wpdb->insert_id;
-		return $inserted_id;
+		return true;
 	}
 
 	/**
-	 * Return the current total users
-	 *
-	 * @return int Total users
+	 * Drops the tables (uninstall only).
 	 */
-	public static function get_total_users() {
+	public static function drop_tables() {
 		global $wpdb;
-
-		$total = $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::users_table() );
-		return $total != null ? intval( $total ) : 0;
+		foreach ( array( self::subscribers_table(), self::notifications_table(), self::logs_table() ) as $table ) {
+			$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- uninstall.
+		}
 	}
 
 	/**
-	 * Get the users stats. $result contains:
-	 * - total
+	 * Builds "%d,%d,..." for an IN clause.
 	 *
-	 * @return array Result
+	 * @param int[] $ids Ids.
+	 * @return string
 	 */
-	public static function get_users_stats() {
+	private static function int_placeholders( array $ids ) {
+		return implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+	}
+
+	/**
+	 * Cleans an id list.
+	 *
+	 * @param mixed $ids Ids.
+	 * @return int[]
+	 */
+	private static function clean_ids( $ids ) {
+		if ( ! is_array( $ids ) ) {
+			return array();
+		}
+		return array_values( array_unique( array_filter( array_map( 'absint', $ids ) ) ) );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Subscribers
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Inserts a subscriber. Returns the new id, or false (also when the
+	 * endpoint already exists).
+	 *
+	 * @param array<string, mixed> $data endpoint, p256dh, auth, content_encoding, wp_user_id, uuid, source, created_at.
+	 * @return int|false
+	 */
+	public static function create_subscriber( array $data ) {
 		global $wpdb;
-
-		$total = intval( $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::users_table() ) );
-
-		return array(
-			'total' => $total,
+		$row = array(
+			'uuid'             => ! empty( $data['uuid'] ) ? (string) $data['uuid'] : wp_generate_uuid4(),
+			'wp_user_id'       => ! empty( $data['wp_user_id'] ) ? (int) $data['wp_user_id'] : null,
+			'endpoint'         => (string) $data['endpoint'],
+			'endpoint_hash'    => BWPN_Subscription_Validator::endpoint_hash( (string) $data['endpoint'] ),
+			'key_p256dh'       => (string) $data['p256dh'],
+			'key_auth'         => (string) $data['auth'],
+			'content_encoding' => BWPN_Subscription_Validator::encoding( $data['content_encoding'] ?? 'aes128gcm' ),
+			'source'           => substr( (string) ( $data['source'] ?? 'subscribe' ), 0, 20 ),
+			'created_at'       => ! empty( $data['created_at'] ) ? (string) $data['created_at'] : self::now(),
 		);
+		$suppress = $wpdb->suppress_errors( true );
+		$result   = $wpdb->insert( self::subscribers_table(), $row );
+		$wpdb->suppress_errors( $suppress );
+		return false === $result ? false : (int) $wpdb->insert_id;
 	}
 
 	/**
-	 * Delete the user by the endpoint
+	 * Updates a subscriber.
 	 *
-	 * @param $endpoint string Endpoint (unique)
-	 *
-	 * @return int|bool Number of rows updated or false
+	 * @param int                  $id   Id.
+	 * @param array<string, mixed> $data Fields: endpoint, p256dh, auth, content_encoding, wp_user_id.
+	 * @return bool
 	 */
-	public static function delete_user_by_endpoint( $endpoint ) {
+	public static function update_subscriber( $id, array $data ) {
 		global $wpdb;
-
-		$sql = $wpdb->prepare( 'DELETE FROM ' . self::users_table() . ' WHERE endpoint=%s', $endpoint );
-		return $wpdb->query( $sql );
+		$row = array( 'updated_at' => self::now() );
+		if ( isset( $data['endpoint'] ) ) {
+			$row['endpoint']      = (string) $data['endpoint'];
+			$row['endpoint_hash'] = BWPN_Subscription_Validator::endpoint_hash( (string) $data['endpoint'] );
+		}
+		if ( isset( $data['p256dh'] ) ) {
+			$row['key_p256dh'] = (string) $data['p256dh'];
+		}
+		if ( isset( $data['auth'] ) ) {
+			$row['key_auth'] = (string) $data['auth'];
+		}
+		if ( isset( $data['content_encoding'] ) ) {
+			$row['content_encoding'] = BWPN_Subscription_Validator::encoding( $data['content_encoding'] );
+		}
+		if ( array_key_exists( 'wp_user_id', $data ) ) {
+			$row['wp_user_id'] = ! empty( $data['wp_user_id'] ) ? (int) $data['wp_user_id'] : null;
+		}
+		$row['failure_count'] = 0;
+		$suppress             = $wpdb->suppress_errors( true );
+		$result               = $wpdb->update( self::subscribers_table(), $row, array( 'id' => (int) $id ) );
+		$wpdb->suppress_errors( $suppress );
+		return false !== $result;
 	}
 
 	/**
-	 * Get the user by id
+	 * Gets a subscriber by id.
 	 *
-	 * @param $user_id int User id
-	 * @return object|null User or null
+	 * @param int $id Id.
+	 * @return object|null
 	 */
-	public static function get_user( $user_id ) {
+	public static function get_subscriber( $id ) {
 		global $wpdb;
-
-		$sql = $wpdb->prepare(
-			'SELECT ' . self::$allowed_users_fields .
-			' FROM ' . self::users_table() . ' WHERE id=%d',
-			$user_id
-		);
-		return $wpdb->get_row( $sql );
+		return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', self::subscribers_table(), (int) $id ) );
 	}
 
 	/**
-	 * Get the user by uuid
+	 * Gets a subscriber by uuid.
 	 *
-	 * @param $uuid string User uuid
-	 * @return object|null User or null
+	 * @param string $uuid UUID.
+	 * @return object|null
 	 */
-	public static function get_user_by_uuid( $uuid ) {
+	public static function get_subscriber_by_uuid( $uuid ) {
 		global $wpdb;
-
-		if ( ! $uuid ) {
+		if ( ! is_string( $uuid ) || '' === $uuid ) {
 			return null;
 		}
-
-		$sql    = $wpdb->prepare(
-			'SELECT ' . self::$allowed_users_fields .
-			' FROM ' . self::users_table() . ' WHERE uuid=%s',
-			$uuid
-		);
-		$result = $wpdb->get_row( $sql );
-		return $result;
+		return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE uuid = %s', self::subscribers_table(), $uuid ) );
 	}
 
 	/**
-	 * Get the user by the specified fields
+	 * Gets a subscriber by endpoint.
 	 *
-	 * @param $uuid string User uuid
-	 * @param $key_auth string Key Auth
-	 * @param $key_p256dh string Key P256DH
-	 * @return object|null User or null
+	 * @param string $endpoint Endpoint.
+	 * @return object|null
 	 */
-	public static function get_user_by( $uuid, $key_auth, $key_p256dh ) {
+	public static function get_subscriber_by_endpoint( $endpoint ) {
 		global $wpdb;
-
-		$sql    = $wpdb->prepare(
-			'SELECT ' . self::$allowed_users_fields .
-			' FROM ' . self::users_table() . ' WHERE uuid=%s or (key_auth=%s && key_p256dh=%s)',
-			$uuid,
-			$key_auth,
-			$key_p256dh
-		);
-		$result = $wpdb->get_row( $sql );
-		return $result;
-	}
-
-	/**
-	 * Update the user
-	 *
-	 * @param $user object User object
-	 * @return int|bool Number of rows updated or false on error
-	 */
-	public static function update_user( $user ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::users_table(),
-			array(
-				'remote_ip'  => $user->remote_ip,
-				'endpoint'   => $user->endpoint,
-				'key_auth'   => $user->key_auth,
-				'key_p256dh' => $user->key_p256dh,
-				'wp_user_id' => $user->wp_user_id,
-			),
-			array( 'id' => $user->id )
-		);
-
-		return $result;
-	}
-
-	/**
-	 * Delete user by id
-	 *
-	 * @param $user array User ids
-	 * @return int|null Number of affected rows or null
-	 */
-	public static function delete_users( $user_ids ) {
-		global $wpdb;
-
-		if ( ! is_array( $user_ids ) ) {
-			error_log( 'Wrong parameter, user ids must be an array' );
-			return false;
+		if ( ! is_string( $endpoint ) || '' === $endpoint ) {
+			return null;
 		}
-		$ids = implode( ',', $user_ids );
-
-		return $wpdb->query( 'DELETE FROM ' . self::users_table() . " WHERE id IN ($ids)" );
+		return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE endpoint_hash = %s', self::subscribers_table(), BWPN_Subscription_Validator::endpoint_hash( $endpoint ) ) );
 	}
 
 	/**
-	 * Get the users
+	 * Deletes subscribers by id.
 	 *
-	 * @param $offset int Offset
-	 * @param $size int Limit
-	 * @return array The result with the users
+	 * @param int[] $ids Ids.
+	 * @return int Rows deleted.
 	 */
-	public static function get_users( $offset, $size, $order_by = 'created_at', $order_asc = 'desc', $mode = OBJECT ) {
+	public static function delete_subscribers( $ids ) {
 		global $wpdb;
-
-		if ( strpos( self::$allowed_users_fields, $order_by ) === false ) {
-			throw new Exception( "The order by [$order_by] field is not allowed" );
+		$ids = self::clean_ids( $ids );
+		if ( empty( $ids ) ) {
+			return 0;
 		}
-		$order_asc = $order_asc === 'asc' ? 'asc' : 'desc';
-
-		$sql     = $wpdb->prepare(
-			'SELECT ' . self::$allowed_users_fields .
-			' FROM ' . self::users_table() .
-			' ORDER BY ' . $order_by . ' ' . $order_asc .
-			' LIMIT %d OFFSET %d',
-			$size,
-			$offset
-		);
-		$results = $wpdb->get_results( $sql, $mode );
-		return $results;
+		$sql = 'DELETE FROM %i WHERE id IN (' . self::int_placeholders( $ids ) . ')';
+		return (int) $wpdb->query( $wpdb->prepare( $sql, array_merge( array( self::subscribers_table() ), $ids ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders built above.
 	}
 
 	/**
-	 * Get the users that belong to the given WordPress User Id
+	 * Deletes a subscriber by endpoint.
 	 *
-	 * @param $wp_user_id int WordPress User Id
-	 * @param  $mode int WPDB Mode
-	 * @return array The result with the users
+	 * @param string $endpoint Endpoint.
+	 * @return int Rows deleted.
 	 */
-	public static function get_users_by_wp_user_id( $wp_user_id, $mode = OBJECT ) {
+	public static function delete_subscriber_by_endpoint( $endpoint ) {
 		global $wpdb;
-
-		$sql = $wpdb->prepare(
-			'SELECT ' . self::$allowed_users_fields .
-			' FROM ' . self::users_table() .
-			' WHERE wp_user_id = %d',
-			$wp_user_id
-		);
-		return $wpdb->get_results( $sql, $mode );
+		return (int) $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE endpoint_hash = %s', self::subscribers_table(), BWPN_Subscription_Validator::endpoint_hash( (string) $endpoint ) ) );
 	}
 
 	/**
-	 * Create a notification in the DB
+	 * Lists subscribers for the admin screen.
 	 *
-	 * @param $payload
-	 * @param $status string one of the NOTIFICATIONS_STATUS_* values
-	 * @param $total int Total users
-	 * @param $batch_size int Batch size
-	 * @param $scheduled_at DateTime Scheduled at
-	 *
-	 * @return $inserted_id or false if error
+	 * @param int    $offset   Offset.
+	 * @param int    $size     Page size.
+	 * @param string $order_by Column.
+	 * @param string $order    asc|desc.
+	 * @param string $output   OBJECT or ARRAY_A.
+	 * @return array<int, mixed>
 	 */
-	public static function create_notification( $payload, $status = self::NOTIFICATIONS_STATUS_SCHEDULED, $total = 0, $batch_size = BWPN_Lib_Push_Server::DEFAULT_BATCH_SIZE, $scheduled_at = null ) {
+	public static function get_subscribers( $offset, $size, $order_by = 'created_at', $order = 'desc', $output = OBJECT ) {
 		global $wpdb;
+		$order_by = in_array( $order_by, self::SUBSCRIBER_FIELDS, true ) ? $order_by : 'created_at';
+		$order    = 'asc' === strtolower( (string) $order ) ? 'ASC' : 'DESC';
+		$sql      = "SELECT * FROM %i ORDER BY %i $order, id $order LIMIT %d OFFSET %d";
+		return (array) $wpdb->get_results( $wpdb->prepare( $sql, self::subscribers_table(), $order_by, (int) $size, (int) $offset ), $output ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $order is ASC or DESC.
+	}
 
-		$scheduled_at = $scheduled_at == null ? null : date( 'Y-m-d H:i:s', $scheduled_at );
-		$result       = $wpdb->insert(
-			self::notifications_table(),
-			array(
-				'payload'      => $payload,
-				'status'       => $status,
-				'total'        => $total,
-				'batch_size'   => $batch_size,
-				'scheduled_at' => $scheduled_at,
+	/**
+	 * Keyset pagination used by the sender: rows with id > $after_id.
+	 *
+	 * Upstream paged with OFFSET over created_at DESC, so subscribers that
+	 * expired (and were deleted) or joined during a send shifted the window
+	 * and people were skipped or notified twice.
+	 *
+	 * @param int $after_id Last processed id.
+	 * @param int $limit    Rows.
+	 * @return object[]
+	 */
+	public static function get_subscribers_after( $after_id, $limit ) {
+		global $wpdb;
+		return (array) $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, endpoint, key_p256dh, key_auth, content_encoding FROM %i WHERE id > %d ORDER BY id ASC LIMIT %d',
+				self::subscribers_table(),
+				(int) $after_id,
+				max( 1, (int) $limit )
 			)
 		);
-
-		if ( $result === false ) {
-			error_log( 'Could not create the notification: ' . print_r( $payload, true ) );
-			return $result;
-		}
-
-		$inserted_id = $wpdb->insert_id;
-		return $inserted_id;
 	}
 
 	/**
-	 * Get the notification by id
+	 * Subscribers that belong to a WordPress user.
 	 *
-	 * @param $notification_id int Notification id
-	 * @return object|null Notification or null
+	 * @param int $wp_user_id User id.
+	 * @return object[]
 	 */
-	public static function get_notification( $notification_id ) {
+	public static function get_subscribers_by_wp_user( $wp_user_id ) {
 		global $wpdb;
+		return (array) $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i WHERE wp_user_id = %d', self::subscribers_table(), (int) $wp_user_id ) );
+	}
 
-		$sql    = $wpdb->prepare(
-			'SELECT ' . self::$allowed_notifications_fields .
-			' FROM ' . self::notifications_table() . ' WHERE id=%d',
-			$notification_id
+	/**
+	 * Number of subscribers.
+	 *
+	 * @return int
+	 */
+	public static function count_subscribers() {
+		global $wpdb;
+		return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i', self::subscribers_table() ) );
+	}
+
+	/**
+	 * Number of subscribers per push service host.
+	 *
+	 * @return array<string, int>
+	 */
+	public static function count_subscribers_by_host() {
+		global $wpdb;
+		$rows = (array) $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(endpoint, '/', 3), '/', -1) AS host, COUNT(*) AS total FROM %i GROUP BY host ORDER BY total DESC",
+				self::subscribers_table()
+			)
 		);
-		$result = $wpdb->get_row( $sql );
+		$result = array();
+		foreach ( $rows as $row ) {
+			$result[ (string) $row->host ] = (int) $row->total;
+		}
 		return $result;
 	}
 
 	/**
-	 * Get notifications that are stalled:
-	 * - Status = "Running"
-	 * - Not taken
-	 * - Last execution > 30 seconds
+	 * New subscribers per day (site timezone) for the last $days days.
 	 *
-	 * @return array The result
+	 * @param int $days Days.
+	 * @return array<string, int> date => count.
 	 */
-	public static function get_notifications_stalled() {
+	public static function subscribers_daily( $days ) {
 		global $wpdb;
-
-		$sql = $wpdb->prepare(
-			'SELECT ' . self::$allowed_notifications_fields .
-			' FROM ' . self::notifications_table() .
-			' WHERE (status = %s AND is_taken = %d AND last_execution_at <= NOW() - INTERVAL 30 SECOND)' .
-			' OR (status = %s AND is_taken = %d AND scheduled_at <= NOW() - INTERVAL 30 SECOND)',
-			self::NOTIFICATIONS_STATUS_RUNNING,
-			0,
-			self::NOTIFICATIONS_STATUS_SCHEDULED,
-			0
+		$offset = (int) round( (float) get_option( 'gmt_offset' ) * HOUR_IN_SECONDS );
+		$since  = self::now( time() - ( (int) $days * DAY_IN_SECONDS ) );
+		$rows   = (array) $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT DATE(DATE_ADD(created_at, INTERVAL %d SECOND)) AS day, COUNT(*) AS total FROM %i WHERE created_at >= %s GROUP BY day',
+				$offset,
+				self::subscribers_table(),
+				$since
+			)
 		);
-		return $wpdb->get_results( $sql );
-	}
-
-	/**
-	 * Get notifications
-	 *
-	 * @param $offset int Offset
-	 * @param $size int Limit
-	 * @param $order_by string Field to order by
-	 * @param $order_asc string 'asc' or 'desc'
-	 * @param $mode int How to return the results
-	 * @return array The result
-	 */
-	public static function get_notifications( $offset, $size, $order_by = 'created_at', $order_asc = 'desc', $mode = OBJECT ) {
-		global $wpdb;
-
-		if ( strpos( self::$allowed_notifications_fields, $order_by ) === false ) {
-			throw new Exception( "The order by [$order_by] field is not alllowed" );
+		$result = array();
+		foreach ( $rows as $row ) {
+			$result[ (string) $row->day ] = (int) $row->total;
 		}
-		$order_asc = $order_asc === 'asc' ? 'asc' : 'desc';
-
-		$sql     = $wpdb->prepare(
-			'SELECT ' . self::$allowed_notifications_fields .
-			' FROM ' . self::notifications_table() .
-			' ORDER BY ' . $order_by . ' ' . $order_asc .
-			' LIMIT %d OFFSET %d',
-			$size,
-			$offset
-		);
-		$results = $wpdb->get_results( $sql, $mode );
-		return $results;
+		return $result;
 	}
 
 	/**
-	 * Get total notifications
+	 * Resets the failure counter of delivered subscribers.
 	 *
-	 * @return int Total notifications
+	 * @param int[] $ids Ids.
 	 */
-	public static function get_notifications_total() {
+	public static function record_success( array $ids ) {
 		global $wpdb;
-
-		$total = $wpdb->get_var( 'SELECT COUNT(id) FROM ' . self::notifications_table() );
-		return intval( $total );
+		$ids = self::clean_ids( $ids );
+		foreach ( array_chunk( $ids, 500 ) as $chunk ) {
+			$sql = 'UPDATE %i SET failure_count = 0, last_success_at = %s WHERE id IN (' . self::int_placeholders( $chunk ) . ')';
+			$wpdb->query( $wpdb->prepare( $sql, array_merge( array( self::subscribers_table(), self::now() ), $chunk ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders built above.
+		}
 	}
 
 	/**
-	 * Get the notification stats. $result contains:
-	 * - total
-	 * - succeeded
-	 * - failed
+	 * Increments the failure counter.
 	 *
-	 * @return array Result
+	 * @param int[] $ids Ids.
+	 */
+	public static function record_failure( array $ids ) {
+		global $wpdb;
+		$ids = self::clean_ids( $ids );
+		foreach ( array_chunk( $ids, 500 ) as $chunk ) {
+			$sql = 'UPDATE %i SET failure_count = LEAST(failure_count + 1, 65000) WHERE id IN (' . self::int_placeholders( $chunk ) . ')';
+			$wpdb->query( $wpdb->prepare( $sql, array_merge( array( self::subscribers_table() ), $chunk ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders built above.
+		}
+	}
+
+	/**
+	 * Deletes subscribers that failed $max_failures sends in a row.
+	 *
+	 * @param int $max_failures Threshold.
+	 * @return int Rows deleted.
+	 */
+	public static function delete_failing_subscribers( $max_failures ) {
+		global $wpdb;
+		return (int) $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE failure_count >= %d LIMIT 5000', self::subscribers_table(), max( 1, (int) $max_failures ) ) );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Notifications (jobs)
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Creates a job.
+	 *
+	 * @param string               $payload      JSON payload.
+	 * @param array<string, mixed> $data         status, total, batch_size, scheduled_at (timestamp), source, post_id.
+	 * @return int|false
+	 */
+	public static function create_notification( $payload, array $data = array() ) {
+		global $wpdb;
+		$row    = array(
+			'payload'      => (string) $payload,
+			'status'       => (string) ( $data['status'] ?? self::STATUS_SCHEDULED ),
+			'total'        => (int) ( $data['total'] ?? 0 ),
+			'batch_size'   => (int) ( $data['batch_size'] ?? 1000 ),
+			'source'       => substr( (string) ( $data['source'] ?? 'manual' ), 0, 20 ),
+			'post_id'      => ! empty( $data['post_id'] ) ? (int) $data['post_id'] : null,
+			'created_at'   => self::now(),
+			'scheduled_at' => self::now( isset( $data['scheduled_at'] ) ? (int) $data['scheduled_at'] : time() ),
+		);
+		$result = $wpdb->insert( self::notifications_table(), $row );
+		if ( false === $result ) {
+			BWPN_Lib_Log::error( 'Could not create the notification job: ' . $wpdb->last_error );
+			return false;
+		}
+		return (int) $wpdb->insert_id;
+	}
+
+	/**
+	 * Gets a job.
+	 *
+	 * @param int $id Id.
+	 * @return object|null
+	 */
+	public static function get_notification( $id ) {
+		global $wpdb;
+		return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', self::notifications_table(), (int) $id ) );
+	}
+
+	/**
+	 * Lists jobs.
+	 *
+	 * @param int    $offset   Offset.
+	 * @param int    $size     Page size.
+	 * @param string $order_by Column.
+	 * @param string $order    asc|desc.
+	 * @param string $output   OBJECT or ARRAY_A.
+	 * @return array<int, mixed>
+	 */
+	public static function get_notifications( $offset, $size, $order_by = 'created_at', $order = 'desc', $output = OBJECT ) {
+		global $wpdb;
+		$order_by = in_array( $order_by, self::NOTIFICATION_FIELDS, true ) ? $order_by : 'created_at';
+		$order    = 'asc' === strtolower( (string) $order ) ? 'ASC' : 'DESC';
+		$sql      = "SELECT * FROM %i ORDER BY %i $order, id $order LIMIT %d OFFSET %d";
+		return (array) $wpdb->get_results( $wpdb->prepare( $sql, self::notifications_table(), $order_by, (int) $size, (int) $offset ), $output ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $order is ASC or DESC.
+	}
+
+	/**
+	 * Number of jobs.
+	 *
+	 * @return int
+	 */
+	public static function count_notifications() {
+		global $wpdb;
+		return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i', self::notifications_table() ) );
+	}
+
+	/**
+	 * Atomically takes the lock on a job. A lock older than $stale_after
+	 * seconds is considered abandoned (the worker crashed or was killed) and
+	 * can be taken over, so jobs no longer stay "running" forever.
+	 *
+	 * @param int $id          Job id.
+	 * @param int $stale_after Seconds.
+	 * @return bool True if this process now owns the job.
+	 */
+	public static function claim_notification( $id, $stale_after ) {
+		global $wpdb;
+		$rows = $wpdb->query(
+			$wpdb->prepare(
+				'UPDATE %i SET is_taken = 1, taken_at = %s WHERE id = %d AND status IN (%s, %s) AND (is_taken = 0 OR taken_at IS NULL OR taken_at < %s)',
+				self::notifications_table(),
+				self::now(),
+				(int) $id,
+				self::STATUS_SCHEDULED,
+				self::STATUS_RUNNING,
+				self::now( time() - (int) $stale_after )
+			)
+		);
+		return 1 === (int) $rows;
+	}
+
+	/**
+	 * Updates job columns.
+	 *
+	 * @param int                  $id     Job id.
+	 * @param array<string, mixed> $fields Columns.
+	 * @return bool
+	 */
+	public static function update_notification( $id, array $fields ) {
+		global $wpdb;
+		$fields = array_intersect_key( $fields, array_flip( self::NOTIFICATION_FIELDS ) );
+		unset( $fields['id'] );
+		if ( empty( $fields ) ) {
+			return true;
+		}
+		return false !== $wpdb->update( self::notifications_table(), $fields, array( 'id' => (int) $id ) );
+	}
+
+	/**
+	 * Adds the result of one batch to the job counters (atomic increment).
+	 *
+	 * @param int $id        Job id.
+	 * @param int $cursor    Last subscriber id processed.
+	 * @param int $succeeded Delivered.
+	 * @param int $failed    Failed.
+	 * @param int $expired   Expired and removed.
+	 * @return bool
+	 */
+	public static function add_progress( $id, $cursor, $succeeded, $failed, $expired ) {
+		global $wpdb;
+		$rows = $wpdb->query(
+			$wpdb->prepare(
+				'UPDATE %i SET last_cursor = GREATEST(last_cursor, %d), succeeded = succeeded + %d, failed = failed + %d, expired = expired + %d, last_execution_at = %s, taken_at = %s WHERE id = %d',
+				self::notifications_table(),
+				(int) $cursor,
+				(int) $succeeded,
+				(int) $failed,
+				(int) $expired,
+				self::now(),
+				self::now(),
+				(int) $id
+			)
+		);
+		return false !== $rows;
+	}
+
+	/**
+	 * Sets the status of a job and releases its lock.
+	 *
+	 * @param int    $id     Job id.
+	 * @param string $status New status.
+	 * @param string $error  Optional error summary.
+	 * @return bool
+	 */
+	public static function set_status( $id, $status, $error = '' ) {
+		$fields = array(
+			'status'   => $status,
+			'is_taken' => 0,
+			'taken_at' => null,
+		);
+		if ( in_array( $status, array( self::STATUS_COMPLETED, self::STATUS_FAILED, self::STATUS_CANCELED ), true ) ) {
+			$fields['finished_at'] = self::now();
+		}
+		if ( '' !== $error ) {
+			$fields['last_error'] = substr( $error, 0, 255 );
+		}
+		return self::update_notification( $id, $fields );
+	}
+
+	/**
+	 * Releases a job lock without changing its status.
+	 *
+	 * @param int $id Job id.
+	 * @return bool
+	 */
+	public static function release_notification( $id ) {
+		return self::update_notification(
+			$id,
+			array(
+				'is_taken' => 0,
+				'taken_at' => null,
+			)
+		);
+	}
+
+	/**
+	 * Ids of jobs that need a nudge: due but never started, paused between
+	 * runs, or locked by a worker that died.
+	 *
+	 * @param int $stale_after Seconds after which a lock is abandoned.
+	 * @return int[]
+	 */
+	public static function get_jobs_to_resume( $stale_after ) {
+		global $wpdb;
+		$grace = self::now( time() - MINUTE_IN_SECONDS );
+		$stale = self::now( time() - (int) $stale_after );
+		$ids   = $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE
+					( status = %s AND is_taken = 0 AND scheduled_at <= %s )
+					OR ( status = %s AND is_taken = 0 AND ( last_execution_at IS NULL OR last_execution_at <= %s ) )
+					OR ( status IN (%s, %s) AND is_taken = 1 AND ( taken_at IS NULL OR taken_at < %s ) )
+				ORDER BY id ASC LIMIT 20',
+				self::notifications_table(),
+				self::STATUS_SCHEDULED,
+				$grace,
+				self::STATUS_RUNNING,
+				$grace,
+				self::STATUS_SCHEDULED,
+				self::STATUS_RUNNING,
+				$stale
+			)
+		);
+		return array_map( 'intval', (array) $ids );
+	}
+
+	/**
+	 * Whether a post already has a job.
+	 *
+	 * @param int $post_id Post id.
+	 * @return bool
+	 */
+	public static function post_has_notification( $post_id ) {
+		global $wpdb;
+		return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE post_id = %d AND status != %s', self::notifications_table(), (int) $post_id, self::STATUS_CANCELED ) ) > 0;
+	}
+
+	/**
+	 * Deletes jobs and their scheduled events.
+	 *
+	 * @param int[] $ids Ids.
+	 * @return int Rows deleted.
+	 */
+	public static function delete_notifications( $ids ) {
+		global $wpdb;
+		$ids = self::clean_ids( $ids );
+		if ( empty( $ids ) ) {
+			return 0;
+		}
+		foreach ( $ids as $id ) {
+			BWPN_Cron::unschedule_job( $id );
+		}
+		$sql = 'DELETE FROM %i WHERE id IN (' . self::int_placeholders( $ids ) . ')';
+		return (int) $wpdb->query( $wpdb->prepare( $sql, array_merge( array( self::notifications_table() ), $ids ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders built above.
+	}
+
+	/**
+	 * Delivery totals across finished and running jobs.
+	 *
+	 * @return array{succeeded: int, failed: int, expired: int}
 	 */
 	public static function get_notifications_stats() {
 		global $wpdb;
-
-		$total     = intval( $wpdb->get_var( 'SELECT SUM(total) FROM ' . self::notifications_table() . " WHERE status !='" . self::NOTIFICATIONS_STATUS_SCHEDULED . "'" ) );
-		$succeeded = intval( $wpdb->get_var( 'SELECT SUM(succeeded) FROM ' . self::notifications_table() . " WHERE status !='" . self::NOTIFICATIONS_STATUS_SCHEDULED . "'" ) );
-		$failed    = intval( $wpdb->get_var( 'SELECT SUM(failed) FROM ' . self::notifications_table() . " WHERE status !='" . self::NOTIFICATIONS_STATUS_SCHEDULED . "'" ) );
-
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT COALESCE(SUM(succeeded), 0) AS succeeded, COALESCE(SUM(failed), 0) AS failed, COALESCE(SUM(expired), 0) AS expired FROM %i WHERE status != %s',
+				self::notifications_table(),
+				self::STATUS_SCHEDULED
+			)
+		);
 		return array(
-			'total'     => $total,
-			'succeeded' => $succeeded,
-			'failed'    => $failed,
+			'succeeded' => (int) ( $row->succeeded ?? 0 ),
+			'failed'    => (int) ( $row->failed ?? 0 ),
+			'expired'   => (int) ( $row->expired ?? 0 ),
 		);
 	}
 
 	/**
-	 * Get the jobs stats. $result contains:
-	 * - scheduled
-	 * - running
-	 * - failed
-	 * - completed
+	 * Number of jobs per status.
 	 *
-	 * @return array Result
+	 * @return array<string, int>
 	 */
 	public static function get_jobs_stats() {
 		global $wpdb;
-
-		$scheduled = intval( $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::notifications_table() . ' WHERE status = \'' . self::NOTIFICATIONS_STATUS_SCHEDULED . '\'' ) );
-		$running   = intval( $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::notifications_table() . ' WHERE status = \'' . self::NOTIFICATIONS_STATUS_RUNNING . '\'' ) );
-		$failed    = intval( $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::notifications_table() . ' WHERE status = \'' . self::NOTIFICATIONS_STATUS_FAILED . '\'' ) );
-		$completed = intval( $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::notifications_table() . ' WHERE status = \'' . self::NOTIFICATIONS_STATUS_COMPLETED . '\'' ) );
-		$canceled  = intval( $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::notifications_table() . ' WHERE status = \'' . self::NOTIFICATIONS_STATUS_CANCELED . '\'' ) );
-
-		return array(
-			'scheduled' => $scheduled,
-			'running'   => $running,
-			'failed'    => $failed,
-			'completed' => $completed,
-			'canceled'  => $canceled,
-		);
-	}
-
-	/**
-	 * Get the notification daily stats. $result contains an array as:
-	 * - date
-	 * - succeeded (total)
-	 * - failed (total)
-	 *
-	 * @param $start_date DateTime
-	 * @param $end_date DateTime
-	 * @return array Result
-	 */
-	public static function get_notifications_daily_stats( $start_date, $end_date ): array {
-		global $wpdb;
-
-		$table   = self::notifications_table();
-		$sql     = $wpdb->prepare(
-			"SELECT DATE_FORMAT(created_at, \"%%Y-%%m-%%d\") as `date`, SUM(failed) as failed, SUM(succeeded) as succeeded
-                    FROM $table
-                    WHERE status != %s && status != %s
-                    GROUP BY `date`
-                    HAVING `date` >= %s AND `date` <= %s",
-			self::NOTIFICATIONS_STATUS_RUNNING,
-			self::NOTIFICATIONS_STATUS_SCHEDULED,
-			$start_date->format( 'Y-m-d' ),
-			$end_date->format( 'Y-m-d' )
-		);
-		$results = $wpdb->get_results( $sql );
-		if ( $results === null ) {
-			return false;
+		$result = array_fill_keys( array( self::STATUS_SCHEDULED, self::STATUS_RUNNING, self::STATUS_COMPLETED, self::STATUS_FAILED, self::STATUS_CANCELED ), 0 );
+		$rows   = (array) $wpdb->get_results( $wpdb->prepare( 'SELECT status, COUNT(*) AS total FROM %i GROUP BY status', self::notifications_table() ) );
+		foreach ( $rows as $row ) {
+			$result[ (string) $row->status ] = (int) $row->total;
 		}
+		return $result;
+	}
 
-		// we need the int values
-		$transformed = array();
-		foreach ( $results as $item ) {
-			$item->succeeded = intval( $item->succeeded );
-			$item->failed    = intval( $item->failed );
-			$transformed[]   = $item;
+	/**
+	 * Delivered and failed notifications per day (site timezone).
+	 *
+	 * @param int $days Days.
+	 * @return array<string, array{succeeded: int, failed: int}>
+	 */
+	public static function notifications_daily( $days ) {
+		global $wpdb;
+		$offset = (int) round( (float) get_option( 'gmt_offset' ) * HOUR_IN_SECONDS );
+		$since  = self::now( time() - ( (int) $days * DAY_IN_SECONDS ) );
+		$rows   = (array) $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT DATE(DATE_ADD(COALESCE(scheduled_at, created_at), INTERVAL %d SECOND)) AS day, SUM(succeeded) AS succeeded, SUM(failed) AS failed FROM %i WHERE status != %s AND COALESCE(scheduled_at, created_at) >= %s GROUP BY day',
+				$offset,
+				self::notifications_table(),
+				self::STATUS_SCHEDULED,
+				$since
+			)
+		);
+		$result = array();
+		foreach ( $rows as $row ) {
+			$result[ (string) $row->day ] = array(
+				'succeeded' => (int) $row->succeeded,
+				'failed'    => (int) $row->failed,
+			);
 		}
-
-		return $transformed;
-	}
-
-	/**
-	 * Take the notification
-	 *
-	 * @param $notification_id int Notification id
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function take_notification( $notification_id ) {
-		return self::take_untake_notification( $notification_id, 1 );
-	}
-
-	/**
-	 * Untake the notification
-	 *
-	 * @param $notification_id int Notification id
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function untake_notification( $notification_id ) {
-		return self::take_untake_notification( $notification_id, 0 );
-	}
-
-	/**
-	 * Update the notification
-	 *
-	 * @param $notification object Notification object
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function update_notification( $notification ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::notifications_table(),
-			array(
-				'payload'           => $notification->payload,
-				'total'             => $notification->total,
-				'succeeded'         => $notification->succeeded,
-				'failed'            => $notification->failed,
-				'last_cursor'       => $notification->last_cursor,
-				'batch_size'        => $notification->batch_size,
-				'status'            => $notification->status,
-				'is_taken'          => $notification->is_taken,
-				'last_execution_at' => $notification->last_execution_at,
-				'scheduled_at'      => $notification->scheduled_at,
-				'finished_at'       => $notification->finished_at,
-			),
-			array( 'id' => $notification->id )
-		);
-
 		return $result;
 	}
 
-	/**
-	 * Mark the notification as running
-	 *
-	 * @param $notification_id int Notification id
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function mark_notification_running( $notification_id ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::notifications_table(),
-			array(
-				'status' => self::NOTIFICATIONS_STATUS_RUNNING,
-			),
-			array( 'id' => $notification_id )
-		);
-
-		return $result;
-	}
+	/* ---------------------------------------------------------------------
+	 * Logs
+	 * ------------------------------------------------------------------- */
 
 	/**
-	 * Mark the notification as canceled
+	 * Inserts a log entry.
 	 *
-	 * @param $notification_id int Notification id
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function mark_notification_canceled( $notification_id ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::notifications_table(),
-			array(
-				'status'      => self::NOTIFICATIONS_STATUS_CANCELED,
-				'finished_at' => current_time( 'mysql', 1 ),
-			),
-			array( 'id' => $notification_id )
-		);
-
-		return $result;
-	}
-
-	/**
-	 * Mark the notification as failed
-	 *
-	 * @param $notification_id int Notification id
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function mark_notification_failed( $notification_id ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::notifications_table(),
-			array(
-				'status'      => self::NOTIFICATIONS_STATUS_FAILED,
-				'finished_at' => current_time( 'mysql', 1 ),
-			),
-			array( 'id' => $notification_id )
-		);
-
-		return $result;
-	}
-
-	/**
-	 * Mark the notification as completed
-	 *
-	 * @param $notification_id int Notification id
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function mark_notification_completed( $notification_id ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::notifications_table(),
-			array(
-				'status'      => self::NOTIFICATIONS_STATUS_COMPLETED,
-				'finished_at' => current_time( 'mysql', 1 ),
-			),
-			array( 'id' => $notification_id )
-		);
-
-		return $result;
-	}
-
-	/**
-	 * Complete the notification and untake it
-	 *
-	 * @param $notification_id int Notification id
-	 * @return int|bool Number of rows updated or false
-	 */
-	public static function mark_notification_completed_untake( $notification_id ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::notifications_table(),
-			array(
-				'status'      => self::NOTIFICATIONS_STATUS_COMPLETED,
-				'finished_at' => current_time( 'mysql', 1 ),
-				'is_taken'    => 0,
-			),
-			array( 'id' => $notification_id )
-		);
-
-		return $result;
-	}
-
-	/**
-	 * Delete notifications by id
-	 *
-	 * @param $notification_ids array Notification ids
-	 * @return int|bool Number of affected rows or null
-	 */
-	public static function delete_notifications( $notification_ids ) {
-		global $wpdb;
-
-		if ( ! is_array( $notification_ids ) ) {
-			error_log( 'Wrong parameter, notification ids must be an array' );
-			return false;
-		}
-		$ids = implode( ',', $notification_ids );
-
-		// First delete scheduled events.
-		foreach ( $notification_ids as $nid ) {
-			$args = array( intval( $nid ) );
-			wp_clear_scheduled_hook( BWPN_Lib_Push_Server::BROADCAST_HOOK, $args );
-		}
-		return $wpdb->query( 'DELETE FROM ' . self::notifications_table() . " WHERE id IN ($ids)" );
-	}
-
-	/**
-	 * Take or untake the notification
-	 *
-	 * @param $notification_id int Notification id
-	 * @param $take int 0 for false, otherwise true
-	 * @return int|bool Number of rows updated or false
-	 */
-	private static function take_untake_notification( $notification_id, $take ) {
-		global $wpdb;
-
-		$result = $wpdb->update(
-			self::notifications_table(),
-			array( 'is_taken' => $take ),
-			array( 'id' => $notification_id )
-		);
-
-		return $result;
-	}
-
-	/**
-	 * Inserts a log entry in the DB
-	 *
-	 * @param string $level
-	 * @param string $message
-	 *
-	 * @return int Inserted Id or false if error
+	 * @param string $level   Level.
+	 * @param string $message Message.
+	 * @return bool
 	 */
 	public static function insert_log( $level, $message ) {
 		global $wpdb;
-
-		$result = $wpdb->insert(
+		$suppress = $wpdb->suppress_errors( true );
+		$result   = $wpdb->insert(
 			self::logs_table(),
 			array(
-				'level'   => $level,
-				'message' => $message,
+				'level'      => substr( (string) $level, 0, 10 ),
+				'message'    => substr( (string) $message, 0, 4000 ),
+				'created_at' => self::now(),
 			)
 		);
-
-		if ( $result === false ) {
-			error_log( 'Could not insert the log: ' . $level . ' ' . $message );
-			return $result;
-		}
-
-		return $wpdb->insert_id;
+		$wpdb->suppress_errors( $suppress );
+		return false !== $result;
 	}
 
 	/**
-	 * Return the total log entries
+	 * Number of log entries.
 	 *
-	 * @return int Total log entries
+	 * @return int
 	 */
-	public static function get_total_logs() {
+	public static function count_logs() {
 		global $wpdb;
-
-		$total = $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::logs_table() );
-		return $total != null ? intval( $total ) : 0;
+		return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i', self::logs_table() ) );
 	}
 
 	/**
-	 * Get the logs
+	 * Lists log entries, newest first.
 	 *
-	 * @param $offset int Offset
-	 * @param $size int Limit
-	 * @return array The result with the logs
+	 * @param int    $offset Offset.
+	 * @param int    $size   Page size.
+	 * @param string $output OBJECT or ARRAY_A.
+	 * @return array<int, mixed>
 	 */
-	public static function get_logs( $offset, $size, $order_by = 'created_at', $order_asc = 'desc', $mode = OBJECT ) {
+	public static function get_logs( $offset, $size, $output = OBJECT ) {
 		global $wpdb;
-
-		if ( strpos( self::$allowed_logs_fields, $order_by ) === false ) {
-			throw new Exception( "The order by [$order_by] field is not allowed" );
-		}
-		$order_asc = $order_asc === 'asc' ? 'asc' : 'desc';
-
-		$sql     = $wpdb->prepare(
-			'SELECT ' . self::$allowed_logs_fields .
-			' FROM ' . self::logs_table() .
-			' ORDER BY ' . $order_by . ' ' . $order_asc .
-			' LIMIT %d OFFSET %d',
-			$size,
-			$offset
-		);
-		$results = $wpdb->get_results( $sql, $mode );
-		return $results;
+		return (array) $wpdb->get_results( $wpdb->prepare( 'SELECT level, message, created_at FROM %i ORDER BY id DESC LIMIT %d OFFSET %d', self::logs_table(), (int) $size, (int) $offset ), $output );
 	}
 
 	/**
-	 * Delete the entries older than the given number of days.
-	 * It has a LIMIT of 1000 to avoid impacting the DB
+	 * Deletes old log entries and caps the table size.
 	 *
-	 * @param $days int Number of days
-	 *
-	 * @return int|bool Number of rows updated or false
+	 * @param int $days Keep this many days.
+	 * @return int Rows deleted.
 	 */
 	public static function delete_old_logs( $days ) {
 		global $wpdb;
-
-		$sql = $wpdb->prepare( 'DELETE FROM ' . self::logs_table() . ' WHERE created_at < (NOW() - INTERVAL %d DAY) LIMIT 1000', $days );
-		return $wpdb->query( $sql );
+		$deleted = (int) $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE created_at < %s LIMIT 10000', self::logs_table(), self::now( time() - (int) $days * DAY_IN_SECONDS ) ) );
+		$cutoff  = $wpdb->get_var( $wpdb->prepare( 'SELECT id FROM %i ORDER BY id DESC LIMIT 1 OFFSET 5000', self::logs_table() ) );
+		if ( null !== $cutoff ) {
+			$deleted += (int) $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE id <= %d', self::logs_table(), (int) $cutoff ) );
+		}
+		return $deleted;
 	}
 }

@@ -1,85 +1,84 @@
 <?php
+/**
+ * Status and health helpers.
+ *
+ * @package BWPN
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 /**
- * Class BWPN_Lib_Utils
- *
- * Contains utilities for checking the Push Server and show messages
+ * Health checks shown on the dashboard and by `wp bwpn status`.
  */
 class BWPN_Lib_Utils {
 
-
 	/**
-	 * Check if the Push Server is enabled
-	 *
-	 * @return bool
-	 */
-	public static function is_enabled() {
-		return ! self::is_disabled();
-	}
-
-	/**
-	 * Check if the Push Server is disabled
+	 * Whether sending is switched off (wp-config BWPN_DISABLED or no keys).
 	 *
 	 * @return bool
 	 */
 	public static function is_disabled() {
-		return defined( 'BWPN_DISABLED' ) && BWPN_DISABLED == true;
-	}
-
-	/**
-	 * Disable the Push Server
-	 */
-	public static function disable() {
-		if ( ! defined( 'BWPN_DISABLED' ) ) {
-			define( 'BWPN_DISABLED', true );
+		if ( defined( 'BWPN_DISABLED' ) && BWPN_DISABLED ) {
+			return true;
 		}
+		return ! BWPN_Settings::has_keys();
 	}
 
 	/**
-	 * Displays a message
+	 * Runs the health checks.
 	 *
-	 * @param $message
-	 * @param $type Default: success, values: success, warning, error
+	 * @return array<string, array{ok: bool, label: string, detail: string}>
 	 */
-	public static function show_message( $message, $type = 'success' ) {
-		$notice = array(
-			'type'    => $type,
-			'message' => $message,
+	public static function health_checks() {
+		$checks = array();
+
+		$checks['keys'] = array(
+			'ok'     => BWPN_Settings::has_keys(),
+			'label'  => __( 'VAPID keys', 'best-web-push-notifications' ),
+			'detail' => BWPN_Settings::has_keys()
+				? ( BWPN_Settings::keys_from_constants() ? __( 'Present (defined in wp-config.php).', 'best-web-push-notifications' ) : __( 'Present. Keep a backup: Tools > Backup.', 'best-web-push-notifications' ) )
+				: __( 'Missing. Deactivate and reactivate the plugin, or import a backup.', 'best-web-push-notifications' ),
 		);
-		set_transient( 'bwpn_admin_notice', $notice );
-	}
 
-	/**
-	 * Clean the transients used to show notice messages
-	 */
-	public static function clean_messages() {
-		delete_transient( 'bwpn_admin_notice' );
-	}
+		$https           = 0 === strpos( home_url( '/' ), 'https://' );
+		$checks['https'] = array(
+			'ok'     => $https,
+			'label'  => __( 'HTTPS', 'best-web-push-notifications' ),
+			'detail' => $https ? __( 'The site uses HTTPS.', 'best-web-push-notifications' ) : __( 'Browsers only allow push notifications on HTTPS sites.', 'best-web-push-notifications' ),
+		);
 
-	/**
-	 * Check the gmp extension
-	 *
-	 * If no gmp, PHP=7.2 and missing VAPID keys, it will disable the Push Server
-	 */
-	public static function check_gmp() {
-		$gmp_loaded     = extension_loaded( 'gmp' );
-		$options        = get_option( 'bwpn_settings', array() );
-		$has_vapid_keys = ! empty( $options['vapid_public_key'] ) && ! empty( $options['vapid_private_key'] );
-		if ( ! $has_vapid_keys && ! $gmp_loaded && version_compare( PHP_VERSION, '7.3', '<' ) ) {
-			error_log( sprintf( 'Missing VAPID keys, and the gmp extension is not enabled on PHP < 7.3 (current: %s)', PHP_VERSION ) );
-			self::show_message( sprintf( esc_html( 'Best Web Push cannot generate the VAPID keys automatically. Help: %1$s Cannot generate the VAPID keys automatically. %2$s', 'best-web-push-notifications' ), "<a href='https://docs.perfecty.org/wp/troubleshooting/#cannot-generate-the-vapid-keys-automatically' target='_blank'>", '</a>' ), 'warning' );
-			self::disable();
-		} elseif ( $has_vapid_keys && ! $gmp_loaded && version_compare( PHP_VERSION, '7.3', '<' ) ) {
-			self::show_message( sprintf( esc_html( 'Best Web Push performance is not optimal because of your current setup. Help: %1$s Better performance%2$s', 'best-web-push-notifications' ), "<a href='https://docs.perfecty.org/wp/troubleshooting/#better-performance' target='_blank'>", '</a>' ), 'warning' );
+		$missing = array();
+		foreach ( array( 'openssl', 'mbstring', 'json' ) as $ext ) {
+			if ( ! extension_loaded( $ext ) ) {
+				$missing[] = $ext;
+			}
 		}
-	}
+		$checks['php'] = array(
+			'ok'     => empty( $missing ),
+			'label'  => __( 'PHP extensions', 'best-web-push-notifications' ),
+			/* translators: %s: comma separated list of PHP extensions. */
+			'detail' => empty( $missing ) ? sprintf( 'PHP %s', PHP_VERSION ) : sprintf( __( 'Missing: %s', 'best-web-push-notifications' ), implode( ', ', $missing ) ),
+		);
 
-	/**
-	 * Check that the database structure was created
-	 */
-	public static function check_database() {
-		if ( ! BWPN_Lib_Db::has_tables() ) {
-			self::show_message( esc_html__( 'The tables for Best Web Push are missing, check the error logs and reactivate the plugin again.', 'best-web-push-notifications' ), 'error' );
-		}
+		$cron           = BWPN_Cron::health();
+		$checks['cron'] = array(
+			'ok'     => $cron['ok'],
+			'label'  => __( 'Background sending (WP-Cron)', 'best-web-push-notifications' ),
+			'detail' => $cron['ok']
+				? __( 'Running.', 'best-web-push-notifications' )
+				: ( $cron['disabled']
+					? __( 'DISABLE_WP_CRON is set, but no system cron seems to call wp-cron.php. Scheduled notifications will not go out. See docs/cloudflare.md.', 'best-web-push-notifications' )
+					: __( 'WP-Cron has not run recently. With full-page caching (Cloudflare, WP Rocket) visits may never reach WordPress; add a system cron job. See docs/cloudflare.md.', 'best-web-push-notifications' ) ),
+		);
+
+		$checks['tables'] = array(
+			'ok'     => BWPN_Lib_Db::has_tables(),
+			'label'  => __( 'Database tables', 'best-web-push-notifications' ),
+			'detail' => BWPN_Lib_Db::has_tables() ? __( 'Present.', 'best-web-push-notifications' ) : __( 'Missing. Deactivate and reactivate the plugin.', 'best-web-push-notifications' ),
+		);
+
+		return $checks;
 	}
 }

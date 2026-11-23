@@ -1,17 +1,27 @@
 <?php
+/**
+ * PHP error_log writer.
+ *
+ * @package BWPN
+ */
 
-/***
- * Log writter that uses error_log()
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Writes logs with error_log().
  */
 class BWPN_Lib_Log_ErrorLog implements BWPN_Lib_Log_Writer {
 
 	/**
-	 * Write a message
+	 * Writes one line.
 	 *
-	 * @param string $level Level code.
-	 * @param string $message Message to log.
+	 * @param string $level   Level.
+	 * @param string $message Message.
+	 * @return bool
 	 */
 	public function write( $level, $message ) {
-		error_log( strtoupper( $level ) . ' | ' . addslashes( $message ) );
+		return error_log( '[best-web-push-notifications] ' . strtoupper( $level ) . ' | ' . $message ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- this is the error_log driver.
 	}
 }
