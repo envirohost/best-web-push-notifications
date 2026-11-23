@@ -445,6 +445,7 @@ class BWPN_Admin {
 						array(
 							'none'       => __( 'Direct connection (REMOTE_ADDR)', 'best-web-push-notifications' ),
 							'cloudflare' => __( 'Cloudflare (CF-Connecting-IP from Cloudflare IPs only)', 'best-web-push-notifications' ),
+							'x-forwarded-for' => __( 'X-Forwarded-For (only behind your own reverse proxy; spoofable otherwise)', 'best-web-push-notifications' ),
 						),
 					),
 					'max_failures'             => array( 'number', __( 'Remove a subscriber after this many failed sends in a row', 'best-web-push-notifications' ), '', 1, 100 ),
