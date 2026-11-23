@@ -68,6 +68,7 @@ class BWPN_Cron {
 		wp_clear_scheduled_hook( self::WATCHDOG_HOOK );
 		wp_clear_scheduled_hook( self::DAILY_HOOK );
 		wp_unschedule_hook( self::JOB_HOOK );
+		wp_clear_scheduled_hook( 'bwpn_migrate_perfecty' );
 	}
 
 	/**

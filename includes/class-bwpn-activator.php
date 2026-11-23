@@ -31,7 +31,15 @@ class BWPN_Activator {
 		}
 
 		if ( BWPN_Migrator::should_run() ) {
-			BWPN_Migrator::run();
+			$result = BWPN_Migrator::run();
+			if ( is_wp_error( $result ) ) {
+				if ( 'bwpn_keys_differ' === $result->get_error_code() ) {
+					BWPN_Notices::add( 'migration_key_conflict' );
+				}
+				BWPN_Lib_Log::warning( 'Perfecty import on activation: ' . $result->get_error_message() );
+			} else {
+				BWPN_Notices::add( 'migration_done', array( 'imported' => $result['imported'] ) );
+			}
 		}
 
 		self::ensure_keys();

@@ -1,30 +1,32 @@
 <?php
 /**
- * Fired when the plugin is uninstalled.
+ * Uninstall: removes data only when "Delete all data" is enabled.
  *
- * When populating this file, consider the following flow
- * of control:
- *
- * - This method should be static
- * - Check if the $_REQUEST content actually is the plugin name
- * - Run an admin referrer check to make sure it goes through authentication
- * - Verify the output of $_GET makes sense
- * - Repeat with other user roles. Best directly by using the links/query string parameters.
- * - Repeat things for multisite. Once for a single site in the network, once sitewide.
- *
- * This file may be updated more in future version of the Boilerplate; however, this is the
- * general skeleton and outline for how the file should work.
- *
- * For more information, see the following discussion:
- * https://github.com/tommcfarlin/WordPress-Plugin-Boilerplate/pull/123#issuecomment-28541913
- *
- * @link       https://github.com/rwngallego
- * @since      1.0.0
- *
- * @package    BWPN
+ * @package BWPN
  */
 
-// If uninstall not called from WordPress, then exit.
 if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 	exit;
 }
+
+$bwpn_settings = get_option( 'bwpn_settings', array() );
+
+wp_clear_scheduled_hook( 'bwpn_watchdog' );
+wp_clear_scheduled_hook( 'bwpn_daily' );
+wp_unschedule_hook( 'bwpn_process_job' );
+wp_unschedule_hook( 'bwpn_migrate_perfecty' );
+
+if ( ! is_array( $bwpn_settings ) || empty( $bwpn_settings['delete_data_on_uninstall'] ) ) {
+	return; // Keep subscribers and keys so a reinstall keeps working.
+}
+
+global $wpdb;
+foreach ( array( 'bwpn_subscribers', 'bwpn_notifications', 'bwpn_logs' ) as $bwpn_table ) {
+	$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $wpdb->prefix . $bwpn_table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+}
+foreach ( array( 'bwpn_settings', 'bwpn_vapid_public_key', 'bwpn_vapid_private_key', 'bwpn_version', 'bwpn_db_version', 'bwpn_watchdog_last_run', 'bwpn_perfecty_migration' ) as $bwpn_option ) {
+	delete_option( $bwpn_option );
+}
+delete_transient( 'bwpn_admin_notices' );
+delete_post_meta_by_key( '_bwpn_send_on_publish' );
+delete_post_meta_by_key( '_bwpn_custom_title' );

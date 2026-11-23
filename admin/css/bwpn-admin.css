@@ -1,71 +1,23 @@
-.bwpn-items-list {
-  list-style: circle;
-  list-style-position: inside;
-}
-
-.bwpn-view-form label {
-  font-weight: bold;
-}
-
-.bwpn-view-payload {
-  margin-left: 20px;
-  padding: 10px;
-  width: 500px;
-  background-color: #ffffff;
-}
-
-.bwpn-view-payload div {
-  margin: 3px;
-}
-
-.bwpn-view-payload span {
-  font-weight: bold;
-}
-
-.bwpn-view-payload-image, .bwpn-view-payload-icon {
-  max-width: 250px;
-  max-height: 250px;
-}
-
-.bwpn-default-icon-preview {
-  width: 50px;
-  height: 50px;
-}
-
-.bwpn-default-icon-preview-container {
-  display: none;
-}
-
-/* Send Notification */
-
-.bwpn-send-notification-image-preview {
-  width: 100px;
-  height: 100px;
-}
-
-.bwpn-send-notification-image-preview-container {
-  display: none;
-}
-
-.bwpn-stats > div {
-  float: left;
-  margin: 20px;
-}
-
-.bwpn-logs-table table tbody tr td{
-  font-family: monospace;
-}
-
-.bwpn-settings-form input[type=text], .bwpn-settings-form textarea {
-  width: 400px;
-}
-
-.bwpn-settings-form .form-table{
-  margin-left: 30px;
-}
-
-.bwpn-options-unregister-conflicts-regex {
-  width: 400px;
-  color: gray;
-  font-style: italic;
-}
+/* Best Web Push Notifications - admin */
+.bwpn-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 16px; margin: 16px 0 24px; }
+.bwpn-tile { background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 16px; }
+.bwpn-tile-value { font-size: 28px; font-weight: 600; line-height: 1.2; }
+.bwpn-tile-label { color: #50575e; margin-top: 4px; }
+.bwpn-health { max-width: 900px; }
+.bwpn-health-icon { width: 28px; }
+.bwpn-ok { color: #00a32a; }
+.bwpn-bad { color: #d63638; }
+.bwpn-narrow { max-width: 480px; }
+.bwpn-narrow .num { text-align: right; }
+.bwpn-card { background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 4px 20px 16px; margin: 16px 0; max-width: 900px; }
+.bwpn-warning { color: #996800; font-weight: 600; }
+.bwpn-error { color: #d63638; }
+.bwpn-key { word-break: break-all; }
+.bwpn-media-preview { width: 48px; height: 48px; object-fit: cover; vertical-align: middle; border-radius: 4px; }
+.bwpn-status { display: inline-block; padding: 2px 8px; border-radius: 3px; background: #f0f0f1; }
+.bwpn-status-completed { background: #edfaef; color: #005c12; }
+.bwpn-status-failed { background: #fcf0f1; color: #8a2424; }
+.bwpn-status-running { background: #f0f6fc; color: #0a4b78; }
+.bwpn-status-scheduled { background: #fcf9e8; color: #614200; }
+.column-status, .column-source { width: 110px; }
+.column-progress { width: 170px; }

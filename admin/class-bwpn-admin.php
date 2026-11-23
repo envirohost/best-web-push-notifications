@@ -1,1666 +1,819 @@
 <?php
-
 /**
- * The admin-specific functionality of the plugin.
+ * Admin screens.
  *
- * @link       https://github.com/rwngallego
- * @since      1.0.0
- *
- * @package    BWPN
- * @subpackage BWPN/admin
+ * @package BWPN
  */
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+require_once BWPN_PATH . 'admin/class-bwpn-admin-tables.php';
+
 /**
- * The admin-specific functionality of the plugin.
- *
- * Defines the plugin name, version, and two examples hooks for how to
- * enqueue the admin-specific stylesheet and JavaScript.
- *
- * @package    BWPN
- * @subpackage BWPN/admin
- * @author     Rowinson Gallego <rwn.gallego@gmail.com>
+ * Menu "Push Notifications": Dashboard, Send, Notifications, Subscribers,
+ * Settings, Tools, Logs. Every form posts to admin-post.php with a nonce
+ * and redirects back (POST/redirect/GET), so reloading never re-sends.
  */
 class BWPN_Admin {
 
-	/**
-	 * The ID of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $plugin_name    The ID of this plugin.
-	 */
-	private $plugin_name;
+	public const SLUG = 'bwpn';
 
 	/**
-	 * The version of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $version    The current version of this plugin.
+	 * Registers hooks.
 	 */
-	private $version;
+	public function register_hooks() {
+		add_action( 'admin_menu', array( $this, 'menu' ) );
+		add_action( 'admin_init', array( $this, 'register_settings' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue' ) );
+		add_action( 'admin_notices', array( 'BWPN_Notices', 'render' ) );
+		add_filter( 'plugin_action_links_' . BWPN_BASENAME, array( $this, 'action_links' ) );
 
-	/**
-	 * Initialize the class and set its properties.
-	 *
-	 * @since    1.0.0
-	 * @param      string $plugin_name       The name of this plugin.
-	 * @param      string $version    The version of this plugin.
-	 */
-	public function __construct( $plugin_name, $version ) {
-		$this->plugin_name = $plugin_name;
-		$this->version     = $version;
+		foreach ( array( 'send', 'jobs', 'subscribers', 'export', 'import', 'migrate', 'keys', 'test' ) as $action ) {
+			add_action( 'admin_post_bwpn_' . $action, array( $this, 'handle_' . $action ) );
+		}
 	}
 
-	/**
-	 * Register the stylesheets for the admin area.
-	 *
-	 * @since    1.0.0
-	 */
-	public function enqueue_styles() {
-
-		/**
-		 * This function is provided for demonstration purposes only.
-		 *
-		 * An instance of this class should be passed to the run() function
-		 * defined in BWPN_Loader as all of the hooks are defined
-		 * in that particular class.
-		 *
-		 * The BWPN_Loader will then create the relationship
-		 * between the defined hooks and the functions defined in this
-		 * class.
-		 */
-
-		wp_enqueue_style( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'css/bwpn-admin.css', array(), $this->version, 'all' );
-		wp_enqueue_style( 'jquery.timepicker', plugin_dir_url( __FILE__ ) . 'css/jquery.timepicker.min.css', array(), '1.3.5', 'screen' );
-		wp_enqueue_style( 'jquery-ui', plugin_dir_url( __FILE__ ) . 'css/jquery-ui/themes/smoothness/jquery-ui.min.css', array(), '1.12.1', 'screen' );
-	}
-
+	/* ---------------------------------------------------------------------
+	 * Menu and assets
+	 * ------------------------------------------------------------------- */
 
 	/**
-	 * Print the WordPress directory plugin links
-	 *
-	 * @param array $actions Array with links.
-	 *
-	 * @return array
-	 * @since    1.3.2
+	 * Adds the menu.
 	 */
-	public function plugin_directory_links( $actions ) {
-		$links   = array(
-			'<a href="' . admin_url( 'admin.php?page=bwpn-options' ) . '">' . esc_html__( 'Settings', 'best-web-push-notifications' ) . '</a>',
-			'<a href="https://docs.perfecty.org/" target="_blank">' . esc_html__( 'Documentation', 'best-web-push-notifications' ) . '</a>',
+	public function menu() {
+		add_menu_page( __( 'Push Notifications', 'best-web-push-notifications' ), __( 'Push Notifications', 'best-web-push-notifications' ), 'bwpn_send_notifications', self::SLUG, array( $this, 'page_dashboard' ), 'dashicons-megaphone', 80 );
+		$pages = array(
+			array( self::SLUG, __( 'Dashboard', 'best-web-push-notifications' ), 'bwpn_send_notifications', 'page_dashboard' ),
+			array( 'bwpn-send', __( 'Send', 'best-web-push-notifications' ), 'bwpn_send_notifications', 'page_send' ),
+			array( 'bwpn-notifications', __( 'Notifications', 'best-web-push-notifications' ), 'bwpn_send_notifications', 'page_notifications' ),
+			array( 'bwpn-subscribers', __( 'Subscribers', 'best-web-push-notifications' ), 'bwpn_manage', 'page_subscribers' ),
+			array( 'bwpn-settings', __( 'Settings', 'best-web-push-notifications' ), 'bwpn_manage', 'page_settings' ),
+			array( 'bwpn-tools', __( 'Tools', 'best-web-push-notifications' ), 'bwpn_manage', 'page_tools' ),
+			array( 'bwpn-logs', __( 'Logs', 'best-web-push-notifications' ), 'bwpn_manage', 'page_logs' ),
 		);
-		$actions = array_merge( $actions, $links );
-		return $actions;
+		foreach ( $pages as $page ) {
+			add_submenu_page( self::SLUG, $page[1], $page[1], $page[2], $page[0], array( $this, $page[3] ) );
+		}
 	}
 
 	/**
-	 * Register the JavaScript for the admin area.
+	 * Settings link on the plugins screen.
 	 *
-	 * @param string $hook_suffix The page this is being called
-	 *
-	 * @since    1.0.0
+	 * @param string[] $links Links.
+	 * @return string[]
 	 */
-	public function enqueue_scripts( $hook_suffix ) {
+	public function action_links( $links ) {
+		array_unshift( $links, '<a href="' . esc_url( admin_url( 'admin.php?page=bwpn-settings' ) ) . '">' . esc_html__( 'Settings', 'best-web-push-notifications' ) . '</a>' );
+		return $links;
+	}
 
-		/**
-		 * This function is provided for demonstration purposes only.
-		 *
-		 * An instance of this class should be passed to the run() function
-		 * defined in BWPN_Loader as all of the hooks are defined
-		 * in that particular class.
-		 *
-		 * The BWPN_Loader will then create the relationship
-		 * between the defined hooks and the functions defined in this
-		 * class.
-		 */
-
-		if ( ! did_action( 'wp_enqueue_media' ) ) {
+	/**
+	 * Enqueues admin assets on our pages.
+	 *
+	 * @param string $hook Hook suffix.
+	 */
+	public function enqueue( $hook ) {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- routing only.
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
+		if ( 0 !== strpos( $page, 'bwpn' ) ) {
+			return;
+		}
+		wp_enqueue_style( 'bwpn-admin', BWPN_URL . 'admin/css/bwpn-admin.css', array(), BWPN_VERSION );
+		if ( in_array( $page, array( 'bwpn-send', 'bwpn-settings' ), true ) ) {
 			wp_enqueue_media();
 		}
-		if ( $hook_suffix === 'toplevel_page_bwpn' ) {
-			// only load it in the Dashboard page
-			// ChartJs has known conflict issues: https://github.com/chartjs/Chart.js/issues/3168.
-			wp_enqueue_script( 'chartjs', plugin_dir_url( __FILE__ ) . 'js/chart.bundle.min.js', array( 'jquery' ), '2.9.4', false );
-		}
-		wp_enqueue_script( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'js/bwpn-admin.js', array( 'jquery', 'wp-i18n' ), $this->version, false );
-		wp_enqueue_script( 'jquery-timepicker', plugin_dir_url( __FILE__ ) . 'js/jquery.timepicker.min.js', array( 'jquery' ), '1.3.5', false );
-		wp_enqueue_script( 'html5-fallback', plugin_dir_url( __FILE__ ) . 'js/html5-fallback.js', array( 'jquery-ui-datepicker', 'jquery-timepicker' ), $this->version, false );
+		wp_enqueue_script( 'bwpn-admin', BWPN_URL . 'admin/js/bwpn-admin.js', array( 'wp-i18n' ), BWPN_VERSION, true );
+		wp_set_script_translations( 'bwpn-admin', 'best-web-push-notifications', BWPN_PATH . 'languages' );
 	}
 
-	 /**
-	  * Register the plugin page in the admin menu
-	  *
-	  * @since 1.0.0
-	  */
-	public function register_admin_menu() {
-		add_menu_page(
-			'Best Web Push',
-			'Best Web Push',
-			'manage_options',
-			'bwpn',
-			array( $this, 'print_dashboard_page' ),
-			'dashicons-smiley'
-		);
+	/* ---------------------------------------------------------------------
+	 * Helpers
+	 * ------------------------------------------------------------------- */
 
-		add_submenu_page(
-			'bwpn',
-			esc_html__( 'Dashboard', 'best-web-push-notifications' ),
-			esc_html__( 'Dashboard', 'best-web-push-notifications' ),
-			'manage_options',
-			'bwpn',
-			array( $this, 'print_dashboard_page' )
-		);
+	/**
+	 * Verifies capability and nonce for a handler.
+	 *
+	 * @param string $action Action name.
+	 * @param string $cap    Capability.
+	 */
+	private function verify( $action, $cap = 'bwpn_manage' ) {
+		if ( ! current_user_can( $cap ) ) {
+			wp_die( esc_html__( 'You are not allowed to do this.', 'best-web-push-notifications' ), 403 );
+		}
+		check_admin_referer( 'bwpn_' . $action );
+	}
 
-		add_submenu_page(
-			'bwpn',
-			esc_html__( 'Send notification', 'best-web-push-notifications' ),
-			esc_html__( 'Send notification', 'best-web-push-notifications' ),
-			'manage_options',
-			'bwpn-send-notification',
-			array( $this, 'print_send_notification_page' )
+	/**
+	 * Redirects back to a page with a message.
+	 *
+	 * @param string $page    Page slug.
+	 * @param string $message Message.
+	 * @param string $type    success|error|warning.
+	 */
+	private function back( $page, $message, $type = 'success' ) {
+		set_transient(
+			'bwpn_flash_' . get_current_user_id(),
+			array(
+				'message' => $message,
+				'type'    => $type,
+			),
+			MINUTE_IN_SECONDS
 		);
+		wp_safe_redirect( admin_url( 'admin.php?page=' . $page ) );
+		exit;
+	}
 
-		add_submenu_page(
-			'bwpn',
-			esc_html__( 'Notification jobs', 'best-web-push-notifications' ),
-			esc_html__( 'Notification jobs', 'best-web-push-notifications' ),
-			'manage_options',
-			'best-web-push-notifications',
-			array( $this, 'print_notifications_page' )
+	/**
+	 * Prints and clears the flash message.
+	 */
+	private function flash() {
+		$key   = 'bwpn_flash_' . get_current_user_id();
+		$flash = get_transient( $key );
+		if ( ! is_array( $flash ) ) {
+			return;
+		}
+		delete_transient( $key );
+		printf( '<div class="notice notice-%s is-dismissible"><p>%s</p></div>', esc_attr( $flash['type'] ), esc_html( $flash['message'] ) );
+	}
+
+	/**
+	 * Page header.
+	 *
+	 * @param string $title Title.
+	 */
+	private function header( $title ) {
+		echo '<div class="wrap bwpn-wrap"><h1>' . esc_html( $title ) . '</h1>';
+		$this->flash();
+	}
+
+	/**
+	 * Selected ids from a bulk form.
+	 *
+	 * @return int[]
+	 */
+	private function posted_ids() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified by the caller.
+		$ids = isset( $_POST['ids'] ) ? (array) wp_unslash( $_POST['ids'] ) : array();
+		return array_values( array_filter( array_map( 'absint', $ids ) ) );
+	}
+
+	/**
+	 * Bulk action from either dropdown.
+	 *
+	 * @return string
+	 */
+	private function bulk_action() {
+		// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified by the caller.
+		foreach ( array( 'action', 'action2' ) as $field ) {
+			if ( isset( $_POST[ $field ] ) && '-1' !== $_POST[ $field ] ) {
+				return sanitize_key( wp_unslash( $_POST[ $field ] ) );
+			}
+		}
+		// phpcs:enable
+		return '';
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Dashboard
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Dashboard page.
+	 */
+	public function page_dashboard() {
+		$this->header( __( 'Push Notifications', 'best-web-push-notifications' ) );
+		$stats = BWPN_Lib_Db::get_notifications_stats();
+		$jobs  = BWPN_Lib_Db::get_jobs_stats();
+		$tiles = array(
+			__( 'Subscribers', 'best-web-push-notifications' ) => BWPN_Lib_Db::count_subscribers(),
+			__( 'Delivered', 'best-web-push-notifications' )   => $stats['succeeded'],
+			__( 'Failed', 'best-web-push-notifications' )      => $stats['failed'],
+			__( 'Expired and removed', 'best-web-push-notifications' ) => $stats['expired'],
+			__( 'Scheduled or sending', 'best-web-push-notifications' ) => $jobs[ BWPN_Lib_Db::STATUS_SCHEDULED ] + $jobs[ BWPN_Lib_Db::STATUS_RUNNING ],
 		);
+		echo '<div class="bwpn-tiles">';
+		foreach ( $tiles as $label => $value ) {
+			printf( '<div class="bwpn-tile"><div class="bwpn-tile-value">%s</div><div class="bwpn-tile-label">%s</div></div>', esc_html( number_format_i18n( (int) $value ) ), esc_html( $label ) );
+		}
+		echo '</div>';
 
-		add_submenu_page(
-			'bwpn',
-			esc_html__( 'Users', 'best-web-push-notifications' ),
-			esc_html__( 'Users', 'best-web-push-notifications' ),
-			'manage_options',
-			'bwpn-users',
-			array( $this, 'print_users_page' )
+		echo '<h2>' . esc_html__( 'Health', 'best-web-push-notifications' ) . '</h2><table class="widefat striped bwpn-health"><tbody>';
+		foreach ( BWPN_Lib_Utils::health_checks() as $check ) {
+			printf(
+				'<tr><td class="bwpn-health-icon"><span class="dashicons %s" aria-hidden="true"></span><span class="screen-reader-text">%s</span></td><th scope="row">%s</th><td>%s</td></tr>',
+				esc_attr( $check['ok'] ? 'dashicons-yes-alt bwpn-ok' : 'dashicons-warning bwpn-bad' ),
+				esc_html( $check['ok'] ? __( 'OK', 'best-web-push-notifications' ) : __( 'Problem', 'best-web-push-notifications' ) ),
+				esc_html( $check['label'] ),
+				esc_html( $check['detail'] )
+			);
+		}
+		echo '</tbody></table>';
+
+		$hosts = BWPN_Lib_Db::count_subscribers_by_host();
+		if ( ! empty( $hosts ) ) {
+			echo '<h2>' . esc_html__( 'Subscribers by push service', 'best-web-push-notifications' ) . '</h2><table class="widefat striped bwpn-narrow"><tbody>';
+			foreach ( $hosts as $host => $count ) {
+				printf( '<tr><td>%s</td><td class="num">%s</td></tr>', esc_html( BWPN_Subscription_Validator::service_label( 'https://' . $host . '/' ) ), esc_html( number_format_i18n( $count ) ) );
+			}
+			echo '</tbody></table>';
+		}
+		echo '</div>';
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Send
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Send page.
+	 */
+	public function page_send() {
+		$this->header( __( 'Send a notification', 'best-web-push-notifications' ) );
+		if ( ! BWPN_Settings::has_keys() ) {
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'VAPID keys are missing. Generate or import them on the Tools page first.', 'best-web-push-notifications' ) . '</p></div>';
+		}
+		$count = BWPN_Lib_Db::count_subscribers();
+		?>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="bwpn-form">
+			<input type="hidden" name="action" value="bwpn_send">
+			<?php wp_nonce_field( 'bwpn_send' ); ?>
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><label for="bwpn-title"><?php esc_html_e( 'Title', 'best-web-push-notifications' ); ?></label></th>
+					<td><input type="text" class="regular-text" id="bwpn-title" name="title" maxlength="<?php echo esc_attr( (string) BWPN_Lib_Payload::MAX_TITLE_CHARS ); ?>" placeholder="<?php echo esc_attr( get_bloginfo( 'name' ) ); ?>"></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="bwpn-body"><?php esc_html_e( 'Message', 'best-web-push-notifications' ); ?></label></th>
+					<td><textarea class="large-text" rows="3" id="bwpn-body" name="body" required maxlength="<?php echo esc_attr( (string) BWPN_Lib_Payload::MAX_BODY_CHARS ); ?>"></textarea></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="bwpn-url"><?php esc_html_e( 'Link', 'best-web-push-notifications' ); ?></label></th>
+					<td><input type="url" class="regular-text" id="bwpn-url" name="url" placeholder="<?php echo esc_attr( home_url( '/' ) ); ?>"></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="bwpn-image"><?php esc_html_e( 'Image (optional)', 'best-web-push-notifications' ); ?></label></th>
+					<td>
+						<input type="url" class="regular-text" id="bwpn-image" name="image">
+						<button type="button" class="button bwpn-media" data-target="bwpn-image" data-mode="url"><?php esc_html_e( 'Choose', 'best-web-push-notifications' ); ?></button>
+						<p class="description"><?php esc_html_e( 'Large images show on Chrome, Edge and Android. Safari and Firefox ignore them.', 'best-web-push-notifications' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="bwpn-when"><?php esc_html_e( 'Send at', 'best-web-push-notifications' ); ?></label></th>
+					<td>
+						<input type="datetime-local" id="bwpn-when" name="when">
+						<p class="description">
+						<?php
+						/* translators: %s: timezone name. */
+						echo esc_html( sprintf( __( 'Leave empty to send now. Site timezone: %s.', 'best-web-push-notifications' ), wp_timezone_string() ) );
+						?>
+						</p>
+					</td>
+				</tr>
+			</table>
+			<?php
+			/* translators: %s: number of subscribers. */
+			submit_button( sprintf( _n( 'Send to %s subscriber', 'Send to %s subscribers', $count, 'best-web-push-notifications' ), number_format_i18n( $count ) ) );
+			?>
+		</form>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Handles the send form.
+	 */
+	public function handle_send() {
+		$this->verify( 'send', 'bwpn_send_notifications' );
+		// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified above.
+		$body  = isset( $_POST['body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['body'] ) ) : '';
+		$title = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : '';
+		$url   = isset( $_POST['url'] ) ? esc_url_raw( wp_unslash( $_POST['url'] ) ) : '';
+		$image = isset( $_POST['image'] ) ? esc_url_raw( wp_unslash( $_POST['image'] ) ) : '';
+		$when  = isset( $_POST['when'] ) ? sanitize_text_field( wp_unslash( $_POST['when'] ) ) : '';
+		// phpcs:enable
+		if ( '' === trim( $body ) ) {
+			$this->back( 'bwpn-send', __( 'The message is empty.', 'best-web-push-notifications' ), 'error' );
+		}
+		$timestamp = null;
+		if ( '' !== $when ) {
+			$date = date_create_immutable( $when, wp_timezone() );
+			if ( false === $date ) {
+				$this->back( 'bwpn-send', __( 'The date is not valid.', 'best-web-push-notifications' ), 'error' );
+			}
+			$timestamp = $date->getTimestamp();
+		}
+		$result = BWPN_Lib_Push_Server::schedule_broadcast( BWPN_Lib_Payload::build( $body, $title, $image, $url ), $timestamp );
+		if ( is_wp_error( $result ) ) {
+			$this->back( 'bwpn-send', $result->get_error_message(), 'error' );
+		}
+		$this->back(
+			'bwpn-notifications',
+			null === $timestamp || $timestamp <= time()
+				? __( 'The notification is being sent.', 'best-web-push-notifications' )
+				: __( 'The notification is scheduled.', 'best-web-push-notifications' )
 		);
+	}
 
-		add_submenu_page(
-			'bwpn',
-			esc_html__( 'Settings', 'best-web-push-notifications' ),
-			esc_html__( 'Settings', 'best-web-push-notifications' ),
-			'manage_options',
-			'bwpn-options',
-			array( $this, 'print_options_page' )
-		);
+	/* ---------------------------------------------------------------------
+	 * Notifications and subscribers
+	 * ------------------------------------------------------------------- */
 
-		add_submenu_page(
-			'bwpn',
-			esc_html__( 'Logs', 'best-web-push-notifications' ),
-			esc_html__( 'Logs', 'best-web-push-notifications' ),
-			'manage_options',
-			'bwpn-logs',
-			array( $this, 'print_logs_page' )
-		);
+	/**
+	 * Notifications page.
+	 */
+	public function page_notifications() {
+		$this->header( __( 'Notifications', 'best-web-push-notifications' ) );
+		$table = new BWPN_Admin_Notifications_Table();
+		$table->prepare_items();
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="bwpn_jobs">';
+		wp_nonce_field( 'bwpn_jobs' );
+		$table->display();
+		echo '</form></div>';
+	}
 
-		add_submenu_page(
-			'bwpn',
-			esc_html__( 'About', 'best-web-push-notifications' ),
-			esc_html__( 'About', 'best-web-push-notifications' ),
-			'manage_options',
-			'bwpn-about',
-			array( $this, 'print_about_page' )
+	/**
+	 * Bulk actions on jobs.
+	 */
+	public function handle_jobs() {
+		$this->verify( 'jobs', 'bwpn_send_notifications' );
+		$ids   = $this->posted_ids();
+		$count = 0;
+		switch ( $this->bulk_action() ) {
+			case 'bwpn_cancel':
+				foreach ( $ids as $id ) {
+					$count += BWPN_Lib_Push_Server::cancel_job( $id ) ? 1 : 0;
+				}
+				break;
+			case 'bwpn_resume':
+				foreach ( $ids as $id ) {
+					$count += BWPN_Lib_Push_Server::resume_job( $id ) ? 1 : 0;
+				}
+				break;
+			case 'bwpn_delete':
+				$count = BWPN_Lib_Db::delete_notifications( $ids );
+				break;
+		}
+		/* translators: %d: number of items. */
+		$this->back( 'bwpn-notifications', sprintf( _n( '%d notification updated.', '%d notifications updated.', $count, 'best-web-push-notifications' ), $count ) );
+	}
+
+	/**
+	 * Subscribers page.
+	 */
+	public function page_subscribers() {
+		$this->header( __( 'Subscribers', 'best-web-push-notifications' ) );
+		$table = new BWPN_Admin_Subscribers_Table();
+		$table->prepare_items();
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="bwpn_subscribers">';
+		wp_nonce_field( 'bwpn_subscribers' );
+		$table->display();
+		echo '</form></div>';
+	}
+
+	/**
+	 * Bulk actions on subscribers.
+	 */
+	public function handle_subscribers() {
+		$this->verify( 'subscribers' );
+		$count = 'bwpn_delete' === $this->bulk_action() ? BWPN_Lib_Db::delete_subscribers( $this->posted_ids() ) : 0;
+		/* translators: %d: number of subscribers. */
+		$this->back( 'bwpn-subscribers', sprintf( _n( '%d subscriber deleted.', '%d subscribers deleted.', $count, 'best-web-push-notifications' ), $count ) );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Settings
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Settings schema: section => [ key => [ type, label, description ] ].
+	 *
+	 * @return array<string, array{title: string, fields: array<string, array<string, mixed>>}>
+	 */
+	private function schema() {
+		return array(
+			'prompt'   => array(
+				'title'  => __( 'Opt-in prompt', 'best-web-push-notifications' ),
+				'fields' => array(
+					'widget_enabled'            => array( 'checkbox', __( 'Show the subscription prompt and bell', 'best-web-push-notifications' ) ),
+					'prompt_visits'             => array( 'number', __( 'Show the prompt from this visit on', 'best-web-push-notifications' ), '', 1, 100 ),
+					'prompt_delay'              => array( 'number', __( 'Delay before the prompt (seconds)', 'best-web-push-notifications' ), '', 0, 600 ),
+					'prompt_scroll'             => array( 'number', __( 'Show after scrolling (% of page, 0 = off)', 'best-web-push-notifications' ), '', 0, 100 ),
+					'hide_bell_after_subscribe' => array( 'checkbox', __( 'Hide the bell after subscribing', 'best-web-push-notifications' ) ),
+					'dialog_title'              => array( 'text', __( 'Prompt text', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'dialog_title' ) ),
+					'dialog_submit'             => array( 'text', __( 'Accept button', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'dialog_submit' ) ),
+					'dialog_cancel'             => array( 'text', __( 'Dismiss button', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'dialog_cancel' ) ),
+					'settings_title'            => array( 'text', __( 'Bell panel title', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'settings_title' ) ),
+					'settings_opt_in'           => array( 'text', __( 'Bell panel opt-in label', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'settings_opt_in' ) ),
+					'settings_update_error'     => array( 'text', __( 'Bell panel error', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'settings_update_error' ) ),
+					'send_welcome_message'      => array( 'checkbox', __( 'Send a welcome notification', 'best-web-push-notifications' ) ),
+					'welcome_message'           => array( 'text', __( 'Welcome notification', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'welcome_message' ) ),
+					'ios_hint_enabled'          => array( 'checkbox', __( 'Show the "Add to Home Screen" hint on iPhone and iPad', 'best-web-push-notifications' ) ),
+					'ios_hint_text'             => array( 'text', __( 'iPhone/iPad hint', 'best-web-push-notifications' ), BWPN_Settings::default_text( 'ios_hint_text' ) ),
+				),
+			),
+			'content'  => array(
+				'title'  => __( 'Notifications', 'best-web-push-notifications' ),
+				'fields' => array(
+					'default_icon'            => array( 'media', __( 'Icon', 'best-web-push-notifications' ), __( 'Square, at least 192x192. Defaults to the site icon.', 'best-web-push-notifications' ) ),
+					'require_interaction'     => array( 'checkbox', __( 'Keep notifications on screen until clicked (desktop)', 'best-web-push-notifications' ) ),
+					'send_on_publish_default' => array( 'checkbox', __( 'Tick "Send a notification when published" by default', 'best-web-push-notifications' ) ),
+					'utm'                     => array( 'text', __( 'Tracking parameters added to links', 'best-web-push-notifications' ), 'utm_source=push&utm_medium=web-push' ),
+					'ttl'                     => array( 'number', __( 'Keep undelivered notifications for (seconds)', 'best-web-push-notifications' ), '', 0, 2419200 ),
+				),
+			),
+			'delivery' => array(
+				'title'  => __( 'Delivery', 'best-web-push-notifications' ),
+				'fields' => array(
+					'vapid_subject'        => array( 'text', __( 'VAPID contact', 'best-web-push-notifications' ), 'mailto:you@example.com', __( 'mailto: address or https: URL push services can contact. Defaults to the site URL or the admin email.', 'best-web-push-notifications' ) ),
+					'batch_size'           => array( 'number', __( 'Subscribers per batch', 'best-web-push-notifications' ), '', 10, 10000 ),
+					'parallel_requests'    => array( 'number', __( 'Parallel requests', 'best-web-push-notifications' ), '', 1, 200 ),
+					'service_worker_scope' => array( 'text', __( 'Service worker scope', 'best-web-push-notifications' ), BWPN_Settings::DEFAULT_SCOPE, __( 'Changing this re-registers the worker; existing subscriptions stay with the old scope until visitors return.', 'best-web-push-notifications' ) ),
+					'manifest_enabled'     => array( 'checkbox', __( 'Add a web app manifest (needed for iPhone and iPad)', 'best-web-push-notifications' ) ),
+					'server_url'           => array( 'text', __( 'Custom REST URL', 'best-web-push-notifications' ), '', __( 'Only if the REST API is served from another URL. Leave empty.', 'best-web-push-notifications' ) ),
+				),
+			),
+			'security' => array(
+				'title'  => __( 'Security and housekeeping', 'best-web-push-notifications' ),
+				'fields' => array(
+					'rate_limit_per_ip'        => array( 'number', __( 'Subscribe requests per IP per minute (0 = off)', 'best-web-push-notifications' ), '', 0, 1000 ),
+					'trusted_proxy'            => array(
+						'select',
+						__( 'Client IP source', 'best-web-push-notifications' ),
+						array(
+							'none'       => __( 'Direct connection (REMOTE_ADDR)', 'best-web-push-notifications' ),
+							'cloudflare' => __( 'Cloudflare (CF-Connecting-IP from Cloudflare IPs only)', 'best-web-push-notifications' ),
+						),
+					),
+					'max_failures'             => array( 'number', __( 'Remove a subscriber after this many failed sends in a row', 'best-web-push-notifications' ), '', 1, 100 ),
+					'log_driver'               => array(
+						'select',
+						__( 'Log to', 'best-web-push-notifications' ),
+						array(
+							'errorlog' => __( 'PHP error log', 'best-web-push-notifications' ),
+							'db'       => __( 'Database (Logs page)', 'best-web-push-notifications' ),
+						),
+					),
+					'log_level'                => array(
+						'select',
+						__( 'Log level', 'best-web-push-notifications' ),
+						array(
+							'error'   => 'error',
+							'warning' => 'warning',
+							'info'    => 'info',
+							'debug'   => 'debug',
+						),
+					),
+					'client_debug'             => array( 'checkbox', __( 'Browser console debugging', 'best-web-push-notifications' ) ),
+					'delete_data_on_uninstall' => array( 'checkbox', __( 'Delete all data, keys and subscribers when the plugin is deleted', 'best-web-push-notifications' ) ),
+				),
+			),
 		);
 	}
 
 	/**
-	 * Register the plugin options
-	 *
-	 * @since 1.0.0
+	 * Registers the settings with the Settings API.
 	 */
-	public function register_options() {
+	public function register_settings() {
 		register_setting(
 			'bwpn_settings_group',
-			'bwpn_settings',
-			array( $this, 'sanitize' )
-		);
-
-		add_settings_section(
-			'bwpn_widget_settings',
-			esc_html__( 'Public widget', 'best-web-push-notifications' ),
-			array( $this, 'print_dialog_section' ),
-			'bwpn-options'
-		);
-
-		add_settings_field(
-			'widget_enabled',
-			esc_html__( 'Enabled', 'best-web-push-notifications' ),
-			array( $this, 'print_widget_enabled' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'visits_to_display_prompt',
-			esc_html__( 'Display after this number of visits', 'best-web-push-notifications' ),
-			array( $this, 'print_visits_to_display_prompt' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'widget_ask_permissions_directly',
-			esc_html__( 'Do not use widgets (ask permissions directly)', 'best-web-push-notifications' ),
-			array( $this, 'print_widget_ask_permissions_directly' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'widget_hide_bell_after_subscribe',
-			esc_html__( 'Hide bell after subscribing', 'best-web-push-notifications' ),
-			array( $this, 'print_widget_hide_bell_after_subscribe' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'dialog_title',
-			esc_html__( 'Subscribe text', 'best-web-push-notifications' ),
-			array( $this, 'print_dialog_title' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'dialog_submit',
-			esc_html__( 'Continue text', 'best-web-push-notifications' ),
-			array( $this, 'print_dialog_submit' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'dialog_cancel',
-			esc_html__( 'Cancel text', 'best-web-push-notifications' ),
-			array( $this, 'print_dialog_cancel' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'settings_title',
-			esc_html__( 'Bell title', 'best-web-push-notifications' ),
-			array( $this, 'print_settings_title' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'settings_subscribed',
-			esc_html__( 'Opt-in text', 'best-web-push-notifications' ),
-			array( $this, 'print_settings_opt_in' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'settings_update_error',
-			esc_html__( 'Message on update error', 'best-web-push-notifications' ),
-			array( $this, 'print_settings_update_error' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'settings_send_welcome_message',
-			esc_html__( 'Send a confirmation notification after subscribe', 'best-web-push-notifications' ),
-			array( $this, 'print_settings_send_welcome_message' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_field(
-			'settings_welcome_message',
-			esc_html__( 'Welcome notification text', 'best-web-push-notifications' ),
-			array( $this, 'print_settings_welcome_message' ),
-			'bwpn-options',
-			'bwpn_widget_settings'
-		);
-
-		add_settings_section(
-			'bwpn_javascript_sdk_settings',
-			esc_html__( 'Javascript SDK', 'best-web-push-notifications' ),
-			array( $this, 'print_javascript_sdk_section' ),
-			'bwpn-options'
-		);
-
-		add_settings_field(
-			'service_worker_scope',
-			esc_html__( 'Service Worker Scope', 'best-web-push-notifications' ),
-			array( $this, 'print_service_worker_scope' ),
-			'bwpn-options',
-			'bwpn_javascript_sdk_settings'
-		);
-
-		add_settings_field(
-			'unregister_conflicts',
-			esc_html__( 'Remove conflicting workers (Push Services only)', 'best-web-push-notifications' ),
-			array( $this, 'print_unregister_conflicts' ),
-			'bwpn-options',
-			'bwpn_javascript_sdk_settings'
-		);
-
-		add_settings_field(
-			'unregister_conflicts_expression',
-			esc_html__( 'Custom conflict detection', 'best-web-push-notifications' ),
-			array( $this, 'print_unregister_conflicts_expression' ),
-			'bwpn-options',
-			'bwpn_javascript_sdk_settings'
-		);
-
-		add_settings_field(
-			'widget_debugging_enabled',
-			esc_html__( 'Enable client logs', 'best-web-push-notifications' ),
-			array( $this, 'print_widget_debugging_enabled' ),
-			'bwpn-options',
-			'bwpn_javascript_sdk_settings'
-		);
-
-		add_settings_section(
-			'bwpn_notifications_settings',
-			esc_html__( 'Notifications', 'best-web-push-notifications' ),
-			array( $this, 'print_notifications_section' ),
-			'bwpn-options'
-		);
-
-		add_settings_field(
-			'notifications_interaction_required',
-			esc_html__( 'Fixed notifications (do not auto hide)', 'best-web-push-notifications' ),
-			array( $this, 'print_notifications_interaction_required' ),
-			'bwpn-options',
-			'bwpn_notifications_settings'
-		);
-
-		add_settings_field(
-			'notifications_default_icon',
-			esc_html__( 'Default Icon', 'best-web-push-notifications' ),
-			array( $this, 'print_notifications_default_icon' ),
-			'bwpn-options',
-			'bwpn_notifications_settings'
-		);
-
-		add_settings_section(
-			'bwpn_segmentation_settings',
-			esc_html__( 'Segmentation and Tracking', 'best-web-push-notifications' ),
-			array( $this, 'print_segmentation_section' ),
-			'bwpn-options'
-		);
-
-		add_settings_field(
-			'segmentation_enabled',
-			esc_html__( 'Enable and collect data from users', 'best-web-push-notifications' ),
-			array( $this, 'print_segmentation_enabled' ),
-			'bwpn-options',
-			'bwpn_segmentation_settings'
-		);
-
-		add_settings_field(
-			'segmentation_tracking_utm',
-			esc_html__( 'UTM analytics', 'best-web-push-notifications' ),
-			array( $this, 'print_segmentation_tracking_utm' ),
-			'bwpn-options',
-			'bwpn_segmentation_settings'
-		);
-
-		add_settings_section(
-			'bwpn_metabox_settings',
-			esc_html__( 'Post publishing', 'best-web-push-notifications' ),
-			array( $this, 'print_metabox_section' ),
-			'bwpn-options'
-		);
-
-		add_settings_field(
-			'check_send_on_publish',
-			esc_html__( 'Always send a notification', 'best-web-push-notifications' ),
-			array( $this, 'print_default_send_on_publish' ),
-			'bwpn-options',
-			'bwpn_metabox_settings'
-		);
-
-		add_settings_section(
-			'bwpn_self_hosted_settings',
-			esc_html__( 'Self-hosted server', 'best-web-push-notifications' ),
-			array( $this, 'print_self_hosted_section' ),
-			'bwpn-options'
-		);
-
-		add_settings_field(
-			'vapid_private_key',
-			esc_html__( 'Vapid private key', 'best-web-push-notifications' ),
-			array( $this, 'print_vapid_private_key' ),
-			'bwpn-options',
-			'bwpn_self_hosted_settings'
-		);
-		add_settings_field(
-			'vapid_public_key',
-			esc_html__( 'Vapid public key', 'best-web-push-notifications' ),
-			array( $this, 'print_vapid_public_key' ),
-			'bwpn-options',
-			'bwpn_self_hosted_settings'
-		);
-
-		add_settings_field(
-			'server_url',
-			esc_html__( 'Custom REST Url', 'best-web-push-notifications' ),
-			array( $this, 'print_server_url' ),
-			'bwpn-options',
-			'bwpn_self_hosted_settings'
-		);
-
-		add_settings_field(
-			'batch_size',
-			esc_html__( 'Batch size', 'best-web-push-notifications' ),
-			array( $this, 'print_batch_size' ),
-			'bwpn-options',
-			'bwpn_self_hosted_settings'
-		);
-
-		add_settings_field(
-			'parallel_flushing_size',
-			esc_html__( 'Parallel flushing size', 'best-web-push-notifications' ),
-			array( $this, 'print_parallel_flushing_size' ),
-			'bwpn-options',
-			'bwpn_self_hosted_settings'
-		);
-
-		add_settings_field(
-			'log_driver',
-			esc_html__( 'Log driver', 'best-web-push-notifications' ),
-			array( $this, 'print_log_driver' ),
-			'bwpn-options',
-			'bwpn_self_hosted_settings'
-		);
-
-		add_settings_field(
-			'log_level',
-			esc_html__( 'Log level', 'best-web-push-notifications' ),
-			array( $this, 'print_log_level' ),
-			'bwpn-options',
-			'bwpn_self_hosted_settings'
-		);
-	}
-
-	/**
-	 * Executes the cron check. Note that this will only run
-	 * when the admin area is loaded (uses the `admin_init` hook)
-	 */
-	public function check_cron() {
-		// This cron check is only intended to be run from the admin area, or
-		// when the `admin_init` hook is called
-		BWPN_Lib_Cron_Check::run();
-	}
-
-	/**
-	 * Execute the next broadcast batch
-	 * This is a WordPress action called from wp-cron
-	 *
-	 * @param $notification_id int Notification ID
-	 */
-	public function execute_broadcast_batch( $notification_id ) {
-		BWPN_Lib_Push_Server::execute_broadcast_batch( $notification_id );
-	}
-
-	/**
-	 * Register the metaboxes
-	 */
-	public function register_metaboxes() {
-		$post_types   = get_post_types(
+			BWPN_Settings::OPTION,
 			array(
-				'public'   => true,
-				'_builtin' => false,
+				'type'              => 'array',
+				'sanitize_callback' => array( $this, 'sanitize' ),
 			)
 		);
-		$post_types[] = 'post';
-
-		add_meta_box( 'bwpn_post_metabox', 'Best Web Push', array( $this, 'display_post_metabox' ), $post_types, 'side', 'high' );
 	}
 
 	/**
-	 * Displays the metabox in the post
+	 * Sanitizes the settings form.
 	 *
-	 * @param $post object Contains the post
-	 */
-	public function display_post_metabox( $post ) {
-		wp_nonce_field( 'bwpn_post_metabox', 'bwpn_post_metabox_nonce' );
-		$options               = get_option( 'bwpn_settings', array() );
-		$check_send_on_publish = isset( $options['check_send_on_publish'] ) && $options['check_send_on_publish'] == 1;
-
-		$send_notification = ! empty( get_post_meta( $post->ID, '_bwpn_send_on_publish', true ) );
-
-		$notification_title = get_post_meta( $post->ID, '_bwpn_notification_custom_title', true );
-		$notification_body  = get_post_meta( $post->ID, '_bwpn_notification_custom_body', true );
-
-		$is_customized = ! empty( trim( $notification_body ) ) || ! empty( trim( $notification_title ) );
-
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-post-metabox.php';
-	}
-
-	/**
-	 * Actions triggered when saving posts
-	 * Hook triggered when saving the posts
-	 *
-	 * @param $post_id
-	 */
-	public function on_save_post( $post_id ) {
-		// check the nonce
-		if ( ! isset( $_POST['bwpn_post_metabox_nonce'] ) ) {
-			return $post_id;
-		}
-		$nonce = $_POST['bwpn_post_metabox_nonce'];
-		if ( ! wp_verify_nonce( $nonce, 'bwpn_post_metabox' ) ) {
-			return $post_id;
-		}
-
-		// nothing on auto save
-		if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
-			return $post_id;
-		}
-
-		// check capabilities
-		if ( ! current_user_can( 'edit_post', $post_id ) || ! current_user_can( 'edit_page', $post_id ) ) {
-			return $post_id;
-		}
-
-		$send_notification = ! empty( $_POST['bwpn_send_on_publish'] );
-		update_post_meta( $post_id, '_bwpn_send_on_publish', $send_notification );
-
-		$notification_title = $_POST['bwpn_notification_custom_title'] ?? '';
-		update_post_meta( $post_id, '_bwpn_notification_custom_title', esc_html( $notification_title ) );
-
-		$notification_body = $_POST['bwpn_notification_custom_body'] ?? '';
-		update_post_meta( $post_id, '_bwpn_notification_custom_body', esc_html( $notification_body ) );
-	}
-
-	/**
-	 * Action triggered when a post changes status
-	 *
-	 * @param $new_status string New status
-	 * @param $old_status string Old status
-	 * @param $post WP_Post Post
-	 */
-	public function on_transition_post_status( $new_status, $old_status, $post ) {
-		// related: https://github.com/WordPress/gutenberg/issues/15094
-		if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
-			return;
-		}
-
-		$send_notification = false;
-		$is_customized     = false;
-		if ( isset( $_POST['bwpn_post_metabox_nonce'] ) &&
-			wp_verify_nonce( $_POST['bwpn_post_metabox_nonce'], 'bwpn_post_metabox' ) ) {
-			// we do this because on_transition_post_status is triggered before on_save_post by WordPress
-			$send_notification  = ! empty( $_POST['bwpn_send_on_publish'] );
-			$notification_title = $_POST['bwpn_notification_custom_title'] ?? '';
-			$notification_body  = $_POST['bwpn_notification_custom_body'] ?? '';
-		} else {
-			$send_notification  = ! empty( get_post_meta( $post->ID, '_bwpn_send_on_publish', true ) );
-			$notification_title = get_post_meta( $post->ID, '_bwpn_notification_custom_title', true );
-			$notification_body  = get_post_meta( $post->ID, '_bwpn_notification_custom_body', true );
-		}
-
-		if ( 'publish' == $new_status && $send_notification ) {
-			$body               = trim( $notification_body ) ? $notification_body : html_entity_decode( get_the_title( $post ) );
-			$url_to_open        = get_the_permalink( $post );
-			$notification_title = trim( $notification_title ) ? $notification_title : '';
-
-			// we use this to check if the post has a thumbnail because has_post_thumbnail could return true even if no post thumbnail is set.
-			$featured_image_url = wp_get_attachment_url( get_post_thumbnail_id( $post->ID ) );
-			if ( ! empty( $featured_image_url ) ) {
-				$post_thumbnail = get_the_post_thumbnail_url( $post->ID );
-			} else {
-				$post_thumbnail = $this->get_first_image_url( $post );
-			}
-
-			$payload = BWPN_Lib_Payload::build( $body, $notification_title, $post_thumbnail, $url_to_open );
-			$result  = BWPN_Lib_Push_Server::schedule_broadcast_async( $payload );
-
-			if ( $result === false ) {
-				error_log( esc_html__( 'Could not schedule the broadcast async, check the logs', 'best-web-push-notifications' ) );
-				BWPN_Lib_Utils::show_message( esc_html__( 'Could not send the notification', 'best-web-push-notifications' ), 'error' );
-			} else {
-				if ( isset( $_POST['bwpn_post_metabox_nonce'] ) ) {
-					// once we sent the notification, we reset the checkbox when the
-					// hook was triggered after clicking the save button.
-					unset( $_POST['bwpn_send_on_publish'] );
-				}
-				update_post_meta( $post->ID, '_bwpn_send_on_publish', false );
-
-				BWPN_Lib_Utils::show_message( '<strong>Best Web Push</strong> ' . esc_html__( 'has sent a notification for the recently published post:', 'best-web-push-notifications' ) . ' ' . $body );
-			}
-		}
-	}
-
-	/**
-	 * Handles scheduled posts that are published by WP-Cron
-	 *
-	 * @param WP_Post $post The post being published
-	 * @since 1.6.4
-	 */
-	public function on_publish_future_post( $post ) {
-		$send_notification = ! empty( get_post_meta( $post->ID, '_bwpn_send_on_publish', true ) );
-
-		if ( $send_notification ) {
-			$notification_title = get_post_meta( $post->ID, '_bwpn_notification_custom_title', true );
-			$notification_body  = get_post_meta( $post->ID, '_bwpn_notification_custom_body', true );
-
-			$body               = trim( $notification_body ) ? $notification_body : html_entity_decode( get_the_title( $post ) );
-			$url_to_open        = get_the_permalink( $post );
-			$notification_title = trim( $notification_title ) ? $notification_title : '';
-
-			// We use this to check if the post has a thumbnail because has_post_thumbnail could return true even if no post thumbnail is set.
-			$featured_image_url = wp_get_attachment_url( get_post_thumbnail_id( $post->ID ) );
-			if ( ! empty( $featured_image_url ) ) {
-				$post_thumbnail = get_the_post_thumbnail_url( $post->ID );
-			} else {
-				$post_thumbnail = $this->get_first_image_url( $post );
-			}
-
-			$payload = BWPN_Lib_Payload::build( $body, $notification_title, $post_thumbnail, $url_to_open );
-			$result  = BWPN_Lib_Push_Server::schedule_broadcast_async( $payload );
-
-			if ( $result === false ) {
-				error_log( esc_html__( 'Could not schedule the broadcast async for scheduled post, check the logs', 'best-web-push-notifications' ) );
-			} else {
-				// Reset the notification flag after sending the notification
-				update_post_meta( $post->ID, '_bwpn_send_on_publish', false );
-			}
-		}
-	}
-
-	/**
-	 * Show the admin notices
-	 *
-	 * Gets the transient 'bwpn_admin_notice' which is an array with the type as key and a message as value
-	 */
-	public function show_admin_notice() {
-		$notice = get_transient( 'bwpn_admin_notice' );
-
-		if ( $notice && is_array( $notice ) ) {
-			$type    = $notice['type'];
-			$message = $notice['message'];
-
-			if ( $type === 'warning' ) {
-				printf( '<div class="notice notice-warning is-dismissible"><p>%s</p></div>', $message );
-			} elseif ( $type === 'error' ) {
-				printf( '<div class="notice notice-error is-dismissible"><p>%s</p></div>', $message );
-			} else {
-				printf( '<div class="notice notice-success is-dismissible"><p>%s</p></div>', $message );
-			}
-
-			delete_transient( 'bwpn_admin_notice' );
-		}
-	}
-
-	/**
-	 * Renders the dashboard page
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_dashboard_page() {
-		$end_date   = new DateTime();
-		$start_date = new DateTime();
-		$start_date->sub( new DateInterval( 'P7D' ) );
-
-		$users_stats         = BWPN_Lib_Db::get_users_stats();
-		$notifications_stats = BWPN_Lib_Db::get_notifications_stats();
-		$jobs_stats          = BWPN_Lib_Db::get_jobs_stats();
-		$daily_stats         = BWPN_Lib_Db::get_notifications_daily_stats( $start_date, $end_date );
-
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-dashboard.php';
-	}
-
-	/**
-	 * Renders the options page
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_options_page() {
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-options.php';
-	}
-
-	/**
-	 * Renders the notifications page
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_notifications_page() {
-		$page = esc_html( sanitize_key( $_REQUEST['page'] ) );
-
-		if ( isset( $_GET['id'] ) && ! empty( $_GET['id'] ) &&
-			isset( $_GET['action'] ) && $_GET['action'] == 'view' ) {
-			$id   = intval( $_REQUEST['id'] );
-			$item = BWPN_Lib_Db::get_notification( $id );
-
-			$item->payload = json_decode( $item->payload );
-
-			require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-notifications-view.php';
-			return;
-		}
-
-		$table    = new BWPN_Admin_Notifications_Table();
-		$affected = $table->prepare_items();
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-notifications.php';
-	}
-
-	/**
-	 * Renders the users page
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_users_page() {
-		$page = esc_html( sanitize_key( $_REQUEST['page'] ) );
-
-		if ( isset( $_GET['id'] ) && ! empty( $_GET['id'] ) &&
-			isset( $_GET['action'] ) && $_GET['action'] == 'view' ) {
-			$id                   = intval( $_REQUEST['id'] );
-			$item                 = BWPN_Lib_Db::get_user( $id );
-			$options              = get_option( 'bwpn_settings', array() );
-			$segmentation_enabled = isset( $options['segmentation_enabled'] ) && $options['segmentation_enabled'] == 1;
-
-			require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-users-view.php';
-			return true;
-		}
-
-		$table    = new BWPN_Admin_Users_Table();
-		$affected = $table->prepare_items();
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-users.php';
-	}
-
-	/**
-	 * Renders the send notification page
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_send_notification_page() {
-		$message = '';
-		$notice  = '';
-
-		$default = array(
-			'bwpn-send-notification-title'       => '',
-			'bwpn-send-notification-message'     => '',
-			'bwpn-send-notification-url-to-open' => '',
-			'bwpn-send-notification-image'       => '',
-			'bwpn-send-notification-timeoffset'  => '',
-		);
-
-		if ( isset( $_REQUEST['nonce'] ) && wp_verify_nonce( $_REQUEST['nonce'], 'bwpn_send_notification' ) ) {
-			$item = shortcode_atts( $default, $_REQUEST );
-
-			$validation_result = $this->validate_notification_message( $item );
-			if ( $validation_result === true ) {
-				// filter
-				$item['bwpn-send-notification-title']       = sanitize_text_field( $item['bwpn-send-notification-title'] );
-				$item['bwpn-send-notification-message']     = sanitize_textarea_field( $item['bwpn-send-notification-message'] );
-				$item['bwpn-send-notification-url-to-open'] = sanitize_text_field( $item['bwpn-send-notification-url-to-open'] );
-				$item['bwpn-send-notification-image']       = sanitize_text_field( $item['bwpn-send-notification-image'] );
-				$item['bwpn-send-notification-timeoffset']  = sanitize_text_field( $item['bwpn-send-notification-timeoffset'] );
-
-				$payload        = BWPN_Lib_Payload::build( $item['bwpn-send-notification-message'], $item['bwpn-send-notification-title'], $item['bwpn-send-notification-image'], $item['bwpn-send-notification-url-to-open'] );
-				$timeoffset     = intval( $item['bwpn-send-notification-timeoffset'] );
-				$scheduled_time = self::calculate_scheduled_time_from_offset( $timeoffset );
-
-				// send notification
-				$result = BWPN_Lib_Push_Server::schedule_broadcast_async( $payload, $scheduled_time );
-
-				if ( $result === false ) {
-					  $notice = esc_html__( 'Could not schedule the notification, check the logs', 'best-web-push-notifications' );
-				} else {
-					$message = esc_html__( 'The notification job has been scheduled', 'best-web-push-notifications' );
-					if ( $item['bwpn-send-notification-timeoffset'] ) {
-						$message .= ' ' . esc_html__( 'at', 'best-web-push-notifications' ) . ' ';
-						$message .= get_date_from_gmt( date( 'Y-m-d H:i:s', $scheduled_time ), 'Y-m-d H:i:s' );
-					}
-
-					// we clear the form
-					$item = $default;
-				}
-			} else {
-				$notice = $validation_result;
-			}
-		} else {
-			$item = $default;
-		}
-
-		add_meta_box(
-			'bwpn_send_notification_meta_box',
-			esc_html__( 'Notification details', 'best-web-push-notifications' ),
-			array( $this, 'print_send_notification_metabox' ),
-			'bwpn-send-notification',
-			'normal'
-		);
-
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-send-notification.php';
-	}
-
-	/**
-	 * Calculate scheduled time
-	 *
-	 * @param array $input Contains the settings
-	 * @return int The notification scheduled time measured in the number of seconds since the Unix Epoch (January 1 1970 00:00:00 GMT).
-	 */
-	private function calculate_scheduled_time_from_offset( $timeoffset ) {
-		$timeoffset = intval( $timeoffset );
-		return time() + $timeoffset;
-	}
-
-	/**
-	 * Validates the notification details
-	 *
-	 * @param array $item Contains the entry
-	 */
-	public function validate_notification_message( $item ) {
-		$messages = array();
-
-		if ( empty( $item['bwpn-send-notification-title'] ) ) {
-			$messages[] = esc_html__( 'The title is required', 'best-web-push-notifications' );
-		}
-
-		if ( empty( $item['bwpn-send-notification-message'] ) ) {
-			$messages[] = esc_html__( 'The message is required', 'best-web-push-notifications' );
-		}
-
-		if ( empty( $messages ) ) {
-			return true;
-		} else {
-			return implode( '<br />', $messages );
-		}
-	}
-
-	/**
-	 * Renders the send notification metabox
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_send_notification_metabox( $item ) {
-		$options  = get_option( 'bwpn_settings' );
-		$icon_id  = isset( $options['notifications_default_icon'] ) ? esc_attr( $options['notifications_default_icon'] ) : '';
-		$icon_url = wp_get_attachment_url( $icon_id );
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-send-notification-metabox.php';
-	}
-
-	/**
-	 * Renders the logs page
-	 *
-	 * @since 1.2.0
-	 */
-	public function print_logs_page() {
-		$page = esc_html( sanitize_key( $_REQUEST['page'] ) );
-
-		$table        = new BWPN_Admin_Logs_Table();
-		$affected     = $table->prepare_items();
-		$options      = get_option( 'bwpn_settings', array() );
-		$enabled_logs = isset( $options['log_driver'] ) && $options['log_driver'] == 'db';
-		if ( ! $enabled_logs ) {
-			$message = esc_html__( 'You are using a logger that does not support the Log viewer (supported: Database)', 'best-web-push-notifications' );
-		}
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-logs.php';
-	}
-
-	/**
-	 * Renders the about page
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_about_page() {
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-admin-about.php';
-	}
-
-	/**
-	 * Sanitize the settings
-	 *
-	 * @param array $input Contains the settings
-	 * @return array
+	 * @param mixed $input Raw input.
+	 * @return array<string, mixed>
 	 */
 	public function sanitize( $input ) {
-		$new_input = array();
-		$options   = get_option( 'bwpn_settings' );
-
-		// checkboxes
-		if ( isset( $input['widget_enabled'] ) ) {
-			$new_input['widget_enabled'] = 1;
-		} else {
-			$new_input['widget_enabled'] = 0;
+		$input = is_array( $input ) ? $input : array();
+		if ( empty( $input['_bwpn_form'] ) ) {
+			// Internal update (migrator, import): values were already validated.
+			return array_intersect_key( $input, BWPN_Settings::defaults() );
 		}
-		if ( isset( $input['unregister_conflicts'] ) ) {
-			$new_input['unregister_conflicts'] = 1;
-		} else {
-			$new_input['unregister_conflicts'] = 0;
-		}
-		if ( isset( $input['widget_debugging_enabled'] ) ) {
-			$new_input['widget_debugging_enabled'] = 1;
-		} else {
-			$new_input['widget_debugging_enabled'] = 0;
-		}
-		if ( isset( $input['widget_hide_bell_after_subscribe'] ) ) {
-			$new_input['widget_hide_bell_after_subscribe'] = 1;
-		} else {
-			$new_input['widget_hide_bell_after_subscribe'] = 0;
-		}
-		if ( isset( $input['widget_ask_permissions_directly'] ) ) {
-			$new_input['widget_ask_permissions_directly'] = 1;
-		} else {
-			$new_input['widget_ask_permissions_directly'] = 0;
-		}
-		if ( isset( $input['segmentation_enabled'] ) ) {
-			$new_input['segmentation_enabled'] = 1;
-		} else {
-			$new_input['segmentation_enabled'] = 0;
-		}
-		if ( isset( $input['notifications_interaction_required'] ) ) {
-			$new_input['notifications_interaction_required'] = 1;
-		} else {
-			$new_input['notifications_interaction_required'] = 0;
-		}
-		if ( isset( $input['check_send_on_publish'] ) ) {
-			$new_input['check_send_on_publish'] = 1;
-		} else {
-			$new_input['check_send_on_publish'] = 0;
-		}
-		if ( isset( $input['settings_send_welcome_message'] ) ) {
-			$new_input['settings_send_welcome_message'] = 1;
-		} else {
-			$new_input['settings_send_welcome_message'] = 0;
-		}
-
-		// text
-		if ( isset( $input['service_worker_scope'] ) ) {
-			$new_input['service_worker_scope'] = sanitize_text_field( $input['service_worker_scope'] );
-		}
-		if ( isset( $input['dialog_title'] ) ) {
-			$new_input['dialog_title'] = sanitize_text_field( $input['dialog_title'] );
-		}
-		if ( isset( $input['dialog_submit'] ) ) {
-			$new_input['dialog_submit'] = sanitize_text_field( $input['dialog_submit'] );
-		}
-		if ( isset( $input['dialog_cancel'] ) ) {
-			$new_input['dialog_cancel'] = sanitize_text_field( $input['dialog_cancel'] );
-		}
-		if ( isset( $input['settings_title'] ) ) {
-			$new_input['settings_title'] = sanitize_text_field( $input['settings_title'] );
-		}
-		if ( isset( $input['settings_opt_in'] ) ) {
-			$new_input['settings_opt_in'] = sanitize_text_field( $input['settings_opt_in'] );
-		}
-		if ( isset( $input['settings_update_error'] ) ) {
-			$new_input['settings_update_error'] = sanitize_text_field( $input['settings_update_error'] );
-		}
-		if ( isset( $input['settings_welcome_message'] ) ) {
-			$new_input['settings_welcome_message'] = sanitize_text_field( $input['settings_welcome_message'] );
-		}
-		if ( isset( $input['vapid_public_key'] ) ) {
-			$new_input['vapid_public_key'] = sanitize_text_field( $input['vapid_public_key'] );
-		}
-		if ( isset( $input['vapid_private_key'] ) ) {
-			$new_input['vapid_private_key'] = sanitize_text_field( $input['vapid_private_key'] );
-		}
-		if ( isset( $input['server_url'] ) ) {
-			$new_input['server_url'] = sanitize_text_field( $input['server_url'] );
-		}
-		if ( isset( $input['batch_size'] ) ) {
-			$new_input['batch_size'] = intval( sanitize_text_field( $input['batch_size'] ) );
-		}
-		if ( isset( $input['parallel_flushing_size'] ) ) {
-			$new_input['parallel_flushing_size'] = intval( sanitize_text_field( $input['parallel_flushing_size'] ) );
-		}
-		if ( isset( $input['notifications_default_icon'] ) ) {
-			$new_input['notifications_default_icon'] = intval( sanitize_text_field( $input['notifications_default_icon'] ) );
-		}
-		if ( isset( $input['unregister_conflicts_expression'] ) ) {
-			$new_input['unregister_conflicts_expression'] = sanitize_text_field( $input['unregister_conflicts_expression'] );
-		}
-		if ( isset( $input['segmentation_tracking_utm'] ) ) {
-			$new_input['segmentation_tracking_utm'] = sanitize_text_field( $input['segmentation_tracking_utm'] );
-		}
-		if ( isset( $input['visits_to_display_prompt'] ) ) {
-			$new_input['visits_to_display_prompt'] = intval( sanitize_text_field( $input['visits_to_display_prompt'] ) );
-		}
-		if ( isset( $input['log_driver'] ) ) {
-			$new_input['log_driver'] = sanitize_text_field( $input['log_driver'] );
-		}
-		if ( isset( $input['log_level'] ) ) {
-			$new_input['log_level'] = sanitize_text_field( $input['log_level'] );
-		}
-
-		if ( empty( $options['vapid_public_key'] ) && empty( $options['vapid_private_key'] ) &&
-			! empty( $new_input['vapid_public_key'] ) && ! empty( $new_input['vapid_private_key'] ) ) {
-			BWPN_Lib_Utils::clean_messages();
-		}
-		return $new_input;
-	}
-
-	/**
-	 * Print the general section info
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_dialog_section() {
-		print esc_html__( 'The controls in your front page (bell control/opt-in box).', 'best-web-push-notifications' );
-	}
-
-	/**
-	 * Print the general section info
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_javascript_sdk_section() {
-		print esc_html__( 'Client SDK that handles the subscription/push notifications.', 'best-web-push-notifications' );
-	}
-
-	/**
-	 * Print the self hosted section info
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_self_hosted_section() {
-		print esc_html__( 'Configure your self-hosted Best Web Push Server.', 'best-web-push-notifications' );
-	}
-
-	/**
-	 * Print the notifications section info
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_notifications_section() {
-		print esc_html__( 'Notifications that the users receive (Mobile/Desktop).', 'best-web-push-notifications' );
-	}
-
-	/**
-	 * Print the segmentation section info
-	 *
-	 * @since 1.1.3
-	 */
-	public function print_segmentation_section() {
-		print esc_html__( 'Campaign targeting and behaviour tracking.', 'best-web-push-notifications' );
-	}
-
-	/**
-	 * Print the Tracking UTM parameters
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_segmentation_tracking_utm() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['segmentation_tracking_utm'] ) ? esc_attr( $options['segmentation_tracking_utm'] ) : '';
-
-		printf(
-			'Example: <div class="bwpn-options-unregister-conflicts-regex">%s</div>' .
-			'<input type="text" id="bwpn_settings[segmentation_tracking_utm]"' .
-			'name="bwpn_settings[segmentation_tracking_utm]" value="%s"/>',
-			esc_html( 'utm_source=bwpn&utm_medium=web-push&utm_campaign=my-campaign-name' ),
-			esc_html( $value )
-		);
-	}
-
-
-	/**
-	 * Print the Vapid public key
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_vapid_public_key() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['vapid_public_key'] ) ? esc_attr( $options['vapid_public_key'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[vapid_public_key]"' .
-			'name="bwpn_settings[vapid_public_key]" value="%s"/>',
-			esc_html( $value )
-		);
-	}
-
-	/**
-	 * Print the Vapid private key
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_vapid_private_key() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['vapid_private_key'] ) ? esc_attr( $options['vapid_private_key'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[vapid_private_key]"' .
-			'name="bwpn_settings[vapid_private_key]" value="%s"/>',
-			esc_html( $value )
-		);
-	}
-
-	/**
-	 * Print the server_url option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_server_url() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['server_url'] ) ? esc_attr( $options['server_url'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[server_url]"' .
-			'name="bwpn_settings[server_url]" value="%s" placeholder="%s"/>',
-			esc_html( $value ),
-			get_rest_url( null, 'bwpn' )
-		);
-	}
-
-	/**
-	 * Print the batch_size option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_batch_size() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['batch_size'] ) ? esc_attr( $options['batch_size'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[batch_size]"' .
-			'name="bwpn_settings[batch_size]" value="%s"/>' .
-			'<div>%s <a href="%s" target="_blank">%s</div>',
-			esc_html( $value ),
-			esc_html( 'High values require a longer script execution time. See: ' ),
-			'https://docs.perfecty.org/wp/performance-improvements/#adjusting-the-batch_size-parameter',
-			'Batch size'
-		);
-	}
-
-	/**
-	 * Print the parallel_flushing_size option
-	 *
-	 * @since 1.4.0
-	 */
-	public function print_parallel_flushing_size() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['parallel_flushing_size'] ) ? esc_attr( $options['parallel_flushing_size'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[parallel_flushing_size]"' .
-			'name="bwpn_settings[parallel_flushing_size]" value="%s"/>' .
-			'<div>%s <a href="%s" target="_blank">%s</div>',
-			esc_html( $value ),
-			esc_html( 'Notifications to send in parallel. Please read: ' ),
-			'https://docs.perfecty.org/wp/performance-improvements/#adjusting-the-parallel_flushing_size-parameter',
-			'Parallel flushing'
-		);
-	}
-
-	/**
-	 * Print the widget_enabled option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_widget_enabled() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['widget_enabled'] ) ? esc_attr( $options['widget_enabled'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[widget_enabled]"' .
-			'name="bwpn_settings[widget_enabled]" %s />',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Print the debugging public enabled option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_widget_debugging_enabled() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['widget_debugging_enabled'] ) ? esc_attr( $options['widget_debugging_enabled'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[widget_debugging_enabled]"' .
-			'name="bwpn_settings[widget_debugging_enabled]" %s />',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Print the hide bell after the user has been subscribed
-	 *
-	 * @since 1.1.3
-	 */
-	public function print_widget_hide_bell_after_subscribe() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['widget_hide_bell_after_subscribe'] ) ? esc_attr( $options['widget_hide_bell_after_subscribe'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[widget_hide_bell_after_subscribe]"' .
-			'name="bwpn_settings[widget_hide_bell_after_subscribe]" %s class="bwpn-options-dialog-group"/>',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Print the visits to display prompt option
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_visits_to_display_prompt() {
-		$options     = get_option( 'bwpn_settings' );
-		$value       = isset( $options['visits_to_display_prompt'] ) && $options['visits_to_display_prompt'] ? esc_attr( $options['visits_to_display_prompt'] ) : '';
-		$placeholder = ! $value ? '0 (Immediately)' : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[visits_to_display_prompt]"' .
-			'name="bwpn_settings[visits_to_display_prompt]" value="%s" placeholder="%s"/>',
-			esc_html( $value ),
-			esc_html__( $placeholder, 'best-web-push-notifications' )
-		);
-	}
-
-	/**
-	 * Print the ask permissions directly option
-	 *
-	 * @since 1.1.3
-	 */
-	public function print_widget_ask_permissions_directly() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['widget_ask_permissions_directly'] ) ? esc_attr( $options['widget_ask_permissions_directly'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[widget_ask_permissions_directly]"' .
-			'name="bwpn_settings[widget_ask_permissions_directly]" %s />',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Print the logs driver setting
-	 *
-	 * @since 1.6.0
-	 */
-	public function print_log_driver() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['log_driver'] ) ? esc_attr( $options['log_driver'] ) : 'errorlog';
-
-		$print_selected = function( $val ) use ( $value ) {
-			return $val == $value ? 'selected' : '';
-		};
-		printf(
-			'<select name="bwpn_settings[log_driver]" id="bwpn_settings[log_driver]">' .
-			'<option value="errorlog" ' . $print_selected( 'errorlog' ) . '>PHP - error_log()</option>' .
-			'<option value="db"' . $print_selected( 'db' ) . '>Database</option>' .
-			'</select>'
-		);
-	}
-
-	/**
-	 * Print the logs level setting
-	 *
-	 * @since 1.6.0
-	 */
-	public function print_log_level() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['log_level'] ) ? esc_attr( $options['log_level'] ) : 'error';
-
-		$print_selected = function( $val ) use ( $value ) {
-			return $val == $value ? 'selected' : '';
-		};
-		printf(
-			'<select name="bwpn_settings[log_level]" id="bwpn_settings[log_level]">' .
-			'<option value="error" ' . $print_selected( 'error' ) . '>Error</option>' .
-			'<option value="warning"' . $print_selected( 'warning' ) . '>Warning</option>' .
-			'<option value="info"' . $print_selected( 'info' ) . '>Info</option>' .
-			'<option value="debug"' . $print_selected( 'debug' ) . '>Debug</option>' .
-			'</select>'
-		);
-	}
-
-	/**
-	 * Print the default notification icon setting
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_notifications_default_icon() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['notifications_default_icon'] ) ? esc_attr( $options['notifications_default_icon'] ) : '';
-
-		printf(
-			'<div class="bwpn-default-icon-preview-container"><img src="%s" class="bwpn-default-icon-preview"/></div>' .
-			'<input type="button" id="bwpn-default-icon-select" class="button" value="%s"/>' .
-			'<input type="hidden" id="bwpn_settings[notifications_default_icon]"' .
-			'name="bwpn_settings[notifications_default_icon]" value="%s"/>',
-			wp_get_attachment_url( $value ),
-			esc_html__( 'Select image', 'best-web-push-notifications' ),
-			esc_html( $value )
-		);
-	}
-
-	/**
-	 * Print the enable segmentation setting
-	 *
-	 * @since 1.1.3
-	 */
-	public function print_segmentation_enabled() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['segmentation_enabled'] ) ? esc_attr( $options['segmentation_enabled'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[segmentation_enabled]"' .
-			'name="bwpn_settings[segmentation_enabled]" %s />',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Print the unregister_conflicts option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_unregister_conflicts() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['unregister_conflicts'] ) ? esc_attr( $options['unregister_conflicts'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[unregister_conflicts]"' .
-			'name="bwpn_settings[unregister_conflicts]" %s />',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Print the unregister_conflicts_expression option
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_unregister_conflicts_expression() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['unregister_conflicts_expression'] ) ? esc_attr( $options['unregister_conflicts_expression'] ) : '';
-
-		printf(
-			'<div>Default expression:</div><div class="bwpn-options-unregister-conflicts-regex">%s</div>' .
-			'<textarea id="bwpn_settings[unregister_conflicts_expression]"' .
-			'name="bwpn_settings[unregister_conflicts_expression]" class="bwpn-options-unregister-conflicts-group" ' .
-			'placeholder="%s">%s</textarea>' .
-			'<div><a href="%s" target="_blank">%s</a></div>',
-			esc_html( BWPN_UNREGISTER_CONFLICTS_EXPRESSION ),
-			esc_html__( 'Custom JS Regular Expression', 'best-web-push-notifications' ),
-			esc_html( $value ),
-			'https://docs.perfecty.org/wp/conflict-resolution/',
-			esc_html__( 'More information', 'best-web-push-notifications' )
-		);
-	}
-
-	/**
-	 * Print the service_worker_scope option
-	 *
-	 * @since 1.0.7
-	 */
-	public function print_service_worker_scope() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['service_worker_scope'] ) ? esc_attr( $options['service_worker_scope'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[service_worker_scope]"' .
-			'name="bwpn_settings[service_worker_scope]" value="%s" />',
-			esc_html( $value )
-		);
-	}
-
-	/**
-	 * Print the notifications_interaction_required option
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_notifications_interaction_required() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['notifications_interaction_required'] ) ? esc_attr( $options['notifications_interaction_required'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[notifications_interaction_required]"' .
-			'name="bwpn_settings[notifications_interaction_required]" %s />',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Print the dialog_title option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_dialog_title() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['dialog_title'] ) && ! empty( $options['dialog_title'] ) ? esc_attr( $options['dialog_title'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[dialog_title]"' .
-			'name="bwpn_settings[dialog_title]" value="%s" placeholder="%s" class="bwpn-options-dialog-group"/>',
-			esc_html( $value ),
-			BWPN_OPTIONS_DIALOG_TITLE
-		);
-	}
-
-	/**
-	 * Print the dialog_submit option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_dialog_submit() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['dialog_submit'] ) && ! empty( $options['dialog_submit'] ) ? esc_attr( $options['dialog_submit'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[dialog_submit]"' .
-			'name="bwpn_settings[dialog_submit]" value="%s" placeholder="%s" class="bwpn-options-dialog-group"/>',
-			esc_html( $value ),
-			BWPN_OPTIONS_DIALOG_CONTINUE
-		);
-	}
-
-	/**
-	 * Print the dialog_cancel option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_dialog_cancel() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['dialog_cancel'] ) && ! empty( $options['dialog_cancel'] ) ? esc_attr( $options['dialog_cancel'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[dialog_cancel]"' .
-			'name="bwpn_settings[dialog_cancel]" value="%s" placeholder="%s" class="bwpn-options-dialog-group"/>',
-			esc_html( $value ),
-			BWPN_OPTIONS_DIALOG_CANCEL
-		);
-	}
-
-	/**
-	 * Print the settings_title option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_settings_title() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['settings_title'] ) && ! empty( $options['settings_title'] ) ? esc_attr( $options['settings_title'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[settings_title]"' .
-			'name="bwpn_settings[settings_title]" value="%s" placeholder="%s" class="bwpn-options-dialog-group"/>',
-			esc_html( $value ),
-			BWPN_OPTIONS_SETTINGS_TITLE
-		);
-	}
-
-	/**
-	 * Print the settings_opt_in option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_settings_opt_in() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['settings_opt_in'] ) && ! empty( $options['settings_opt_in'] ) ? esc_attr( $options['settings_opt_in'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[settings_opt_in]"' .
-			'name="bwpn_settings[settings_opt_in]" value="%s" placeholder="%s" class="bwpn-options-dialog-group"/>',
-			esc_html( $value ),
-			BWPN_OPTIONS_SETTINGS_OPT_IN
-		);
-	}
-
-	/**
-	 * Print the settings_update_error option
-	 *
-	 * @since 1.0.0
-	 */
-	public function print_settings_update_error() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['settings_update_error'] ) && ! empty( $options['settings_update_error'] ) ? esc_attr( $options['settings_update_error'] ) : '';
-
-		printf(
-			'<input type="text" id="bwpn_settings[settings_update_error]"' .
-			'name="bwpn_settings[settings_update_error]" value="%s" placeholder="%s" class="bwpn-options-dialog-group"/>',
-			esc_html( $value ),
-			BWPN_OPTIONS_SETTINGS_UPDATE_ERROR
-		);
-	}
-
-	/**
-	 * Print the metabox options section
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_metabox_section() {
-		print esc_html__( 'Configure how to send notifications after publishing a Post.', 'best-web-push-notifications' );
-	}
-
-	/**
-	 * Print the check send on publish by default
-	 *
-	 * @since 1.3.0
-	 */
-	public function print_default_send_on_publish() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['check_send_on_publish'] ) ? esc_attr( $options['check_send_on_publish'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[check_send_on_publish]"' .
-			'name="bwpn_settings[check_send_on_publish]" %s/>',
-			esc_html( $enabled )
-		);
-	}
-
-	/**
-	 * Get first image URL in post content
-	 *
-	 * @since 1.0.8
-	 *
-	 * @return string $thumbnail_url on success, '' on failure
-	 */
-	public function get_first_image_url( $post ) {
-		$content = $post->post_content;
-		$regex   = '/src="([^"]*)"/';
-		preg_match_all( $regex, $content, $matches );
-		$matches = array_reverse( $matches );
-		// this is the image url of the first img embedded in content.
-		$img_url = $matches[0][0] ?? '';
-
-		// this is the image post id.
-		$post_img_id = $this->get_attachment_id( $img_url );
-
-		if ( $post_img_id !== 0 ) {
-			// this is an array related to the thumbnail of the first image. If post-thumbnail size is not set, it returns original image.
-			$img_thumb_url = wp_get_attachment_image_src( $post_img_id, $size = 'post-thumbnail', $icon = false );
-		} else {
-			$img_thumb_url[0] = '';
-		}
-		// we return the URL of the thumbnail.
-		return $img_thumb_url[0];
-	}
-
-	/**
-	 * Get an attachment ID given a URL.
-	 * https://wordpress.stackexchange.com/questions/6645/turn-a-url-into-an-attachment-post-id/7094#7094
-	 *
-	 * @param string $url
-	 *
-	 * @return int Attachment ID on success, 0 on failure
-	 */
-	function get_attachment_id( $url ) {
-		$attachment_id = 0;
-		$dir           = wp_upload_dir();
-		if ( false !== strpos( $url, $dir['baseurl'] . '/' ) ) { // Is URL in uploads directory?
-			$file       = basename( $url );
-			$query_args = array(
-				'post_type'   => 'attachment',
-				'post_status' => 'inherit',
-				'fields'      => 'ids',
-				'meta_query'  => array(
-					array(
-						'value'   => $file,
-						'compare' => 'LIKE',
-						'key'     => '_wp_attachment_metadata',
-					),
-				),
-			);
-
-			$query = new WP_Query( $query_args );
-			if ( $query->have_posts() ) {
-				foreach ( $query->posts as $post_id ) {
-					$meta                = wp_get_attachment_metadata( $post_id );
-					$original_file       = basename( $meta['file'] );
-					$cropped_image_files = wp_list_pluck( $meta['sizes'], 'file' );
-					if ( $original_file === $file || in_array( $file, $cropped_image_files ) ) {
-						$attachment_id = $post_id;
+		$current = BWPN_Settings::all();
+		$clean   = $current;
+		foreach ( $this->schema() as $section ) {
+			foreach ( $section['fields'] as $key => $field ) {
+				$type = $field[0];
+				$raw  = $input[ $key ] ?? null;
+				switch ( $type ) {
+					case 'checkbox':
+						$clean[ $key ] = empty( $raw ) ? 0 : 1;
 						break;
-					}
+					case 'number':
+					case 'media':
+						$value = absint( $raw );
+						if ( 'number' === $type ) {
+							$value = max( (int) ( $field[3] ?? 0 ), min( (int) ( $field[4] ?? PHP_INT_MAX ), $value ) );
+						}
+						$clean[ $key ] = $value;
+						break;
+					case 'select':
+						$clean[ $key ] = array_key_exists( (string) $raw, $field[2] ) ? (string) $raw : $current[ $key ];
+						break;
+					default:
+						$clean[ $key ] = sanitize_text_field( (string) $raw );
 				}
 			}
 		}
-		return $attachment_id;
+		if ( '' !== $clean['vapid_subject'] && ! preg_match( '#^(mailto:.+@.+|https://.+)$#', $clean['vapid_subject'] ) ) {
+			add_settings_error( BWPN_Settings::OPTION, 'bwpn_subject', __( 'The VAPID contact must start with mailto: or https://. It was cleared.', 'best-web-push-notifications' ) );
+			$clean['vapid_subject'] = '';
+		}
+		if ( '' !== $clean['server_url'] ) {
+			$clean['server_url'] = esc_url_raw( $clean['server_url'], array( 'https', 'http' ) );
+		}
+		return $clean;
 	}
 
 	/**
-	 * Print the settings_send_welcome_message option
-	 *
-	 * @since 1.4.0
+	 * Settings page.
 	 */
-	public function print_settings_send_welcome_message() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['settings_send_welcome_message'] ) ? esc_attr( $options['settings_send_welcome_message'] ) : 0;
-
-		$enabled = $value ? 'checked="checked"' : '';
-
-		printf(
-			'<input type="checkbox" id="bwpn_settings[settings_send_welcome_message]"' .
-			'name="bwpn_settings[settings_send_welcome_message]" %s />',
-			esc_html( $enabled )
-		);
+	public function page_settings() {
+		$this->header( __( 'Settings', 'best-web-push-notifications' ) );
+		settings_errors( BWPN_Settings::OPTION );
+		$values = BWPN_Settings::all();
+		echo '<form method="post" action="options.php" class="bwpn-form">';
+		settings_fields( 'bwpn_settings_group' );
+		echo '<input type="hidden" name="' . esc_attr( BWPN_Settings::OPTION ) . '[_bwpn_form]" value="1">';
+		foreach ( $this->schema() as $section ) {
+			echo '<h2>' . esc_html( $section['title'] ) . '</h2><table class="form-table" role="presentation">';
+			foreach ( $section['fields'] as $key => $field ) {
+				$this->render_field( $key, $field, $values[ $key ] ?? '' );
+			}
+			echo '</table>';
+		}
+		submit_button();
+		echo '</form></div>';
 	}
 
 	/**
-	 * Print the settings_welcome_message option
+	 * Renders one field row.
 	 *
-	 * @since 1.4.0
+	 * @param string              $key   Setting key.
+	 * @param array<int, mixed>   $field Field definition.
+	 * @param mixed               $value Current value.
 	 */
-	public function print_settings_welcome_message() {
-		$options = get_option( 'bwpn_settings' );
-		$value   = isset( $options['settings_welcome_message'] ) && ! empty( $options['settings_welcome_message'] ) ? esc_attr( $options['settings_welcome_message'] ) : BWPN_OPTIONS_SETTINGS_WELCOME_MESSAGE;
+	private function render_field( $key, array $field, $value ) {
+		$id   = 'bwpn-' . str_replace( '_', '-', $key );
+		$name = BWPN_Settings::OPTION . '[' . $key . ']';
+		echo '<tr><th scope="row"><label for="' . esc_attr( $id ) . '">' . esc_html( $field[1] ) . '</label></th><td>';
+		switch ( $field[0] ) {
+			case 'checkbox':
+				printf( '<input type="checkbox" id="%s" name="%s" value="1" %s>', esc_attr( $id ), esc_attr( $name ), checked( (int) $value, 1, false ) );
+				break;
+			case 'number':
+				printf( '<input type="number" class="small-text" id="%s" name="%s" value="%d" min="%d" max="%d">', esc_attr( $id ), esc_attr( $name ), (int) $value, (int) ( $field[3] ?? 0 ), (int) ( $field[4] ?? 0 ) );
+				break;
+			case 'select':
+				printf( '<select id="%s" name="%s">', esc_attr( $id ), esc_attr( $name ) );
+				foreach ( $field[2] as $option => $label ) {
+					printf( '<option value="%s" %s>%s</option>', esc_attr( (string) $option ), selected( (string) $value, (string) $option, false ), esc_html( $label ) );
+				}
+				echo '</select>';
+				break;
+			case 'media':
+				$url = $value ? wp_get_attachment_image_url( (int) $value, 'thumbnail' ) : '';
+				printf( '<input type="hidden" id="%s" name="%s" value="%d">', esc_attr( $id ), esc_attr( $name ), (int) $value );
+				printf( '<img class="bwpn-media-preview" id="%s-preview" src="%s" alt="" %s> ', esc_attr( $id ), esc_url( (string) $url ), $url ? '' : 'hidden' );
+				printf( '<button type="button" class="button bwpn-media" data-target="%s" data-mode="id">%s</button> ', esc_attr( $id ), esc_html__( 'Choose', 'best-web-push-notifications' ) );
+				printf( '<button type="button" class="button-link bwpn-media-clear" data-target="%s">%s</button>', esc_attr( $id ), esc_html__( 'Remove', 'best-web-push-notifications' ) );
+				break;
+			default:
+				printf( '<input type="text" class="regular-text" id="%s" name="%s" value="%s" placeholder="%s">', esc_attr( $id ), esc_attr( $name ), esc_attr( (string) $value ), esc_attr( (string) ( $field[2] ?? '' ) ) );
+		}
+		$description = 'media' === $field[0] ? ( $field[2] ?? '' ) : ( $field[3] ?? '' );
+		if ( is_string( $description ) && '' !== $description && in_array( $field[0], array( 'text', 'media' ), true ) ) {
+			echo '<p class="description">' . esc_html( $description ) . '</p>';
+		}
+		echo '</td></tr>';
+	}
 
-		printf(
-			'<input type="text" id="bwpn_settings[settings_welcome_message]"' .
-			'name="bwpn_settings[settings_welcome_message]" value="%s" class="bwpn-options-dialog-group"/>',
-			esc_html( $value )
+	/* ---------------------------------------------------------------------
+	 * Tools
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Tools page: backup, import, Perfecty migration, keys, test send.
+	 */
+	public function page_tools() {
+		$this->header( __( 'Tools', 'best-web-push-notifications' ) );
+		$post_url = esc_url( admin_url( 'admin-post.php' ) );
+		?>
+		<div class="bwpn-card">
+			<h2><?php esc_html_e( 'Backup', 'best-web-push-notifications' ); ?></h2>
+			<p><?php esc_html_e( 'Download the subscribers, settings and VAPID keys. Restoring the keys is what keeps existing subscribers working after moving or reinstalling the site.', 'best-web-push-notifications' ); ?></p>
+			<p class="bwpn-warning"><?php esc_html_e( 'The JSON backup contains your private key. Store it like a password.', 'best-web-push-notifications' ); ?></p>
+			<form method="post" action="<?php echo $post_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped above. ?>">
+				<input type="hidden" name="action" value="bwpn_export">
+				<?php wp_nonce_field( 'bwpn_export' ); ?>
+				<button class="button button-primary" name="format" value="json"><?php esc_html_e( 'Download JSON backup', 'best-web-push-notifications' ); ?></button>
+				<button class="button" name="format" value="csv"><?php esc_html_e( 'Download subscribers (CSV)', 'best-web-push-notifications' ); ?></button>
+			</form>
+		</div>
+
+		<div class="bwpn-card">
+			<h2><?php esc_html_e( 'Restore or import', 'best-web-push-notifications' ); ?></h2>
+			<form method="post" action="<?php echo $post_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped above. ?>" enctype="multipart/form-data">
+				<input type="hidden" name="action" value="bwpn_import">
+				<?php wp_nonce_field( 'bwpn_import' ); ?>
+				<p><input type="file" name="file" accept=".json,.csv,application/json,text/csv" required></p>
+				<p><label><input type="checkbox" name="settings" value="1"> <?php esc_html_e( 'Also restore settings (JSON only)', 'best-web-push-notifications' ); ?></label></p>
+				<p><label><input type="checkbox" name="overwrite_keys" value="1"> <?php esc_html_e( 'Replace the current VAPID keys with the ones in the backup', 'best-web-push-notifications' ); ?></label></p>
+				<?php submit_button( __( 'Import', 'best-web-push-notifications' ), 'secondary', 'submit', false ); ?>
+			</form>
+		</div>
+
+		<div class="bwpn-card">
+			<h2><?php esc_html_e( 'Import from Perfecty Push', 'best-web-push-notifications' ); ?></h2>
+			<?php
+			$state = BWPN_Migrator::state();
+			if ( ! BWPN_Migrator::perfecty_present() ) {
+				echo '<p>' . esc_html__( 'No Perfecty Push data was found on this site.', 'best-web-push-notifications' ) . '</p>';
+			} else {
+				if ( 'none' !== $state['status'] ) {
+					/* translators: 1: status, 2: imported count, 3: skipped count. */
+					echo '<p>' . esc_html( sprintf( __( 'Last import: %1$s - %2$d imported, %3$d skipped.', 'best-web-push-notifications' ), $state['status'], $state['imported'], $state['skipped'] ) ) . '</p>';
+				}
+				?>
+				<p><?php esc_html_e( 'Copies the VAPID keys, settings, service worker scope and subscribers. Perfecty Push data is not changed. Deactivate Perfecty Push afterwards so subscribers do not get notifications twice.', 'best-web-push-notifications' ); ?></p>
+				<form method="post" action="<?php echo $post_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped above. ?>">
+					<input type="hidden" name="action" value="bwpn_migrate">
+					<?php wp_nonce_field( 'bwpn_migrate' ); ?>
+					<p><label><input type="checkbox" name="overwrite_keys" value="1"> <?php esc_html_e( 'Replace the current VAPID keys with Perfecty\'s', 'best-web-push-notifications' ); ?></label></p>
+					<?php submit_button( __( 'Import from Perfecty Push', 'best-web-push-notifications' ), 'secondary', 'submit', false ); ?>
+				</form>
+				<?php
+			}
+			?>
+		</div>
+
+		<div class="bwpn-card">
+			<h2><?php esc_html_e( 'VAPID keys', 'best-web-push-notifications' ); ?></h2>
+			<p><?php esc_html_e( 'Public key:', 'best-web-push-notifications' ); ?> <code class="bwpn-key"><?php echo esc_html( BWPN_Settings::public_key() ? BWPN_Settings::public_key() : '-' ); ?></code></p>
+			<?php if ( BWPN_Settings::keys_from_constants() ) : ?>
+				<p><?php esc_html_e( 'The keys are defined in wp-config.php.', 'best-web-push-notifications' ); ?></p>
+			<?php else : ?>
+				<form method="post" action="<?php echo $post_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped above. ?>" class="bwpn-confirm" data-confirm="<?php esc_attr_e( 'New keys make every existing subscription stop working. Continue?', 'best-web-push-notifications' ); ?>">
+					<input type="hidden" name="action" value="bwpn_keys">
+					<?php wp_nonce_field( 'bwpn_keys' ); ?>
+					<?php submit_button( BWPN_Settings::has_keys() ? __( 'Generate new keys', 'best-web-push-notifications' ) : __( 'Generate keys', 'best-web-push-notifications' ), BWPN_Settings::has_keys() ? 'delete' : 'primary', 'submit', false ); ?>
+				</form>
+			<?php endif; ?>
+		</div>
+
+		<?php if ( is_user_logged_in() ) : ?>
+		<div class="bwpn-card">
+			<h2><?php esc_html_e( 'Test', 'best-web-push-notifications' ); ?></h2>
+			<p><?php esc_html_e( 'Sends a test notification to the browsers where you subscribed while logged in.', 'best-web-push-notifications' ); ?></p>
+			<form method="post" action="<?php echo $post_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped above. ?>">
+				<input type="hidden" name="action" value="bwpn_test">
+				<?php wp_nonce_field( 'bwpn_test' ); ?>
+				<?php submit_button( __( 'Send me a test', 'best-web-push-notifications' ), 'secondary', 'submit', false ); ?>
+			</form>
+		</div>
+		<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Streams an export.
+	 */
+	public function handle_export() {
+		$this->verify( 'export' );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above.
+		$format = isset( $_POST['format'] ) && 'csv' === $_POST['format'] ? 'csv' : 'json';
+		$host   = sanitize_file_name( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$file   = 'bwpn-' . $host . '-' . gmdate( 'Ymd-His' ) . '.' . $format;
+		nocache_headers();
+		header( 'Content-Disposition: attachment; filename="' . $file . '"' );
+		if ( 'csv' === $format ) {
+			header( 'Content-Type: text/csv; charset=utf-8' );
+			$out = fopen( 'php://output', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- download stream.
+			BWPN_Transfer::export_csv( $out );
+			fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		} else {
+			header( 'Content-Type: application/json; charset=utf-8' );
+			echo BWPN_Transfer::export_json( true ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON download.
+		}
+		BWPN_Lib_Log::info( 'Export downloaded by user ' . get_current_user_id() . " ($format)" );
+		exit;
+	}
+
+	/**
+	 * Handles an uploaded backup or CSV.
+	 */
+	public function handle_import() {
+		$this->verify( 'import' );
+		// phpcs:disable WordPress.Security.NonceVerification.Missing -- verified above.
+		if ( empty( $_FILES['file']['tmp_name'] ) || ! is_uploaded_file( $_FILES['file']['tmp_name'] ) ) { // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- path checked by is_uploaded_file.
+			$this->back( 'bwpn-tools', __( 'No file was uploaded.', 'best-web-push-notifications' ), 'error' );
+		}
+		$tmp  = $_FILES['file']['tmp_name']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$name = isset( $_FILES['file']['name'] ) ? sanitize_file_name( wp_unslash( $_FILES['file']['name'] ) ) : '';
+		$args = array(
+			'keys'           => true,
+			'overwrite_keys' => ! empty( $_POST['overwrite_keys'] ),
+			'settings'       => ! empty( $_POST['settings'] ),
 		);
+		// phpcs:enable
+		if ( '.csv' === strtolower( substr( $name, -4 ) ) ) {
+			$result = BWPN_Transfer::import_csv( $tmp );
+		} else {
+			$result = BWPN_Transfer::import_json( (string) file_get_contents( $tmp ), $args ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local upload.
+		}
+		if ( is_wp_error( $result ) ) {
+			$this->back( 'bwpn-tools', $result->get_error_message(), 'error' );
+		}
+		$message = sprintf(
+			/* translators: 1: imported, 2: updated, 3: skipped. */
+			__( 'Import finished: %1$d new, %2$d updated, %3$d skipped.', 'best-web-push-notifications' ),
+			$result['imported'],
+			$result['updated'],
+			$result['skipped']
+		);
+		if ( isset( $result['keys'] ) && 'restored' === $result['keys'] ) {
+			$message .= ' ' . __( 'VAPID keys restored.', 'best-web-push-notifications' );
+		}
+		$this->back( 'bwpn-tools', $message );
+	}
+
+	/**
+	 * Runs the Perfecty import.
+	 */
+	public function handle_migrate() {
+		$this->verify( 'migrate' );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above.
+		$overwrite = ! empty( $_POST['overwrite_keys'] );
+		$result    = BWPN_Migrator::run( $overwrite );
+		if ( is_wp_error( $result ) ) {
+			$this->back( 'bwpn-tools', $result->get_error_message(), 'error' );
+		}
+		$message = 'done' === $result['status']
+			/* translators: 1: imported, 2: skipped. */
+			? sprintf( __( 'Perfecty Push import finished: %1$d imported, %2$d skipped. Deactivate Perfecty Push now.', 'best-web-push-notifications' ), $result['imported'], $result['skipped'] )
+			/* translators: %d: imported so far. */
+			: sprintf( __( 'Import in progress (%d so far); it continues in the background.', 'best-web-push-notifications' ), $result['imported'] );
+		$this->back( 'bwpn-tools', $message );
+	}
+
+	/**
+	 * Generates a new key pair.
+	 */
+	public function handle_keys() {
+		$this->verify( 'keys' );
+		try {
+			$keys = BWPN_External_Webpush::create_vapid_keys();
+		} catch ( Throwable $e ) {
+			$this->back( 'bwpn-tools', $e->getMessage(), 'error' );
+		}
+		BWPN_Settings::set_keys( $keys['publicKey'], $keys['privateKey'] );
+		BWPN_Lib_Log::warning( 'VAPID keys were regenerated by user ' . get_current_user_id() );
+		$this->back( 'bwpn-tools', __( 'New VAPID keys were generated. Existing subscribers need to subscribe again.', 'best-web-push-notifications' ), 'warning' );
+	}
+
+	/**
+	 * Sends a test to the current user's browsers.
+	 */
+	public function handle_test() {
+		$this->verify( 'test', 'bwpn_send_notifications' );
+		$result = BWPN_Lib_Push_Server::notify_user( get_current_user_id(), BWPN_Lib_Payload::build( __( 'Test notification from Best Web Push Notifications.', 'best-web-push-notifications' ) ) );
+		if ( is_wp_error( $result ) ) {
+			$this->back( 'bwpn-tools', $result->get_error_message(), 'error' );
+		}
+		if ( 0 === $result['ok'] + $result['failed'] + $result['expired'] ) {
+			$this->back( 'bwpn-tools', __( 'You have no subscribed browsers. Subscribe on the site while logged in, then try again.', 'best-web-push-notifications' ), 'warning' );
+		}
+		/* translators: 1: delivered, 2: failed. */
+		$this->back( 'bwpn-tools', sprintf( __( 'Test sent: %1$d delivered, %2$d failed.', 'best-web-push-notifications' ), $result['ok'], $result['failed'] + $result['expired'] ), $result['ok'] > 0 ? 'success' : 'error' );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Logs
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Logs page.
+	 */
+	public function page_logs() {
+		$this->header( __( 'Logs', 'best-web-push-notifications' ) );
+		if ( 'db' !== BWPN_Settings::str( 'log_driver' ) ) {
+			echo '<p>' . esc_html__( 'Logs are written to the PHP error log. Choose "Database" under Settings > Log to, to see them here.', 'best-web-push-notifications' ) . '</p></div>';
+			return;
+		}
+		$table = new BWPN_Admin_Logs_Table();
+		$table->prepare_items();
+		$table->display();
+		echo '</div>';
 	}
 }

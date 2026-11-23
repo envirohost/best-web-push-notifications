@@ -1,55 +1,51 @@
 <?php
 /**
- * The integration interface between Best Web Push and external WordPress plugins.
+ * Public PHP API for other plugins and themes.
  *
- * @link       https://github.com/rwngallego
- * @since      1.2.0
- *
- * @package    BWPN
- * @subpackage BWPN/integration
+ * @package BWPN
  */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
 
 /**
- * Best Web Push integration
+ * Stable entry points (same method names as Perfecty Push's
+ * Perfecty_Push_Integration, so integrations port by renaming the class).
  *
- * @package    BWPN
- * @subpackage BWPN/integration
- * @author     Rowinson Gallego <rwn.gallego@gmail.com>
+ *     $push = new BWPN_Integration();
+ *     $push->broadcast( 'Sale starts now', 'My Shop', '', 'https://example.com/sale' );
+ *     $push->notify( $user_id, 'Your order shipped' );
  */
-
 class BWPN_Integration {
 
 	/**
-	 * Send one notification to the WordPress user specified by $user_id
+	 * Sends a notification now to every browser of a WordPress user.
 	 *
-	 * @param int    $wp_user_id WordPress User Id
-	 * @param string $message Message to be sent
-	 * @param string $title Title of the message (default: site name)
-	 * @param string $image_url Url of the image to show (default: none)
-	 * @param string $url_to_open Url to open (default: site url)
-	 * @return array Array with [succeeded, failed]
-	 * @throws Exception
-	 * @since 1.2.0
+	 * @param int    $wp_user_id  WordPress user id.
+	 * @param string $message     Message.
+	 * @param string $title       Title (default: site name).
+	 * @param string $image_url   Large image URL.
+	 * @param string $url_to_open URL opened on click (default: home).
+	 * @return array{ok: int, failed: int, expired: int, auth: int}|WP_Error
 	 */
 	public function notify( $wp_user_id, $message, $title = '', $image_url = '', $url_to_open = '' ) {
 		$payload = BWPN_Lib_Payload::build( $message, $title, $image_url, $url_to_open );
-		return BWPN_Lib_Push_Server::notify( $wp_user_id, $payload );
+		return BWPN_Lib_Push_Server::notify_user( (int) $wp_user_id, $payload );
 	}
 
 	/**
-	 * Schedule a broadcast notification to all the users.
-	 * If succeeded it will return the notification id
+	 * Queues a notification to every subscriber.
 	 *
-	 * @param string $message Message to be sent
-	 * @param string $title Title of the message (default: site name)
-	 * @param string $image_url Url of the image to show (default: none)
-	 * @param string $url_to_open Url to open (default: site url)
-	 * @return int $notification_id if success, false otherwise
-	 * @throws Exception
-	 * @since 1.2.0
+	 * @param string   $message     Message.
+	 * @param string   $title       Title (default: site name).
+	 * @param string   $image_url   Large image URL.
+	 * @param string   $url_to_open URL opened on click (default: home).
+	 * @param int|null $timestamp   When to send (Unix time), null for now.
+	 * @return int|WP_Error Job id.
 	 */
-	public function broadcast( $message, $title = '', $image_url = '', $url_to_open = '' ) {
+	public function broadcast( $message, $title = '', $image_url = '', $url_to_open = '', $timestamp = null ) {
 		$payload = BWPN_Lib_Payload::build( $message, $title, $image_url, $url_to_open );
-		return BWPN_Lib_Push_Server::broadcast( $payload );
+		return BWPN_Lib_Push_Server::schedule_broadcast( $payload, $timestamp, array( 'source' => 'api' ) );
 	}
 }
