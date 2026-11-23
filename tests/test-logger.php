@@ -3,11 +3,11 @@
 /**
  * Class LoggerTest
  *
- * @package Perfecty_Push
+ * @package BWPN
  */
 
 /**
- * Test the Perfecty_Push_Lib_Logger class
+ * Test the BWPN_Lib_Logger class
  */
 use DMS\PHPUnitExtensions\ArraySubset\ArraySubsetAsserts;
 
@@ -18,12 +18,12 @@ class LoggerTest extends WP_UnitTestCase
     public function set_up()
     {
         parent::set_up();
-        activate_perfecty_push();
+        activate_bwpn();
     }
 
     public function tear_down()
     {
-        deactivate_perfecty_push();
+        deactivate_bwpn();
         parent::tear_down();
     }
 
@@ -32,15 +32,15 @@ class LoggerTest extends WP_UnitTestCase
      */
     public function test_logger_enabled()
     {
-    	$writter = new Perfecty_Push_Lib_Log_Db();
-    	Perfecty_Push_Lib_Log::init($writter, Perfecty_Push_Lib_Log::DEBUG);
-        Perfecty_Push_Lib_Log::enable();
-        Perfecty_Push_Lib_Log::debug("debug message");
-        Perfecty_Push_Lib_Log::info("info message");
-        Perfecty_Push_Lib_Log::warning("warning message");
-        Perfecty_Push_Lib_Log::error("error message");
-        $logs = Perfecty_Push_Lib_Db::get_logs(0, 10);
-        Perfecty_Push_Lib_Log::disable();
+    	$writter = new BWPN_Lib_Log_Db();
+    	BWPN_Lib_Log::init($writter, BWPN_Lib_Log::DEBUG);
+        BWPN_Lib_Log::enable();
+        BWPN_Lib_Log::debug("debug message");
+        BWPN_Lib_Log::info("info message");
+        BWPN_Lib_Log::warning("warning message");
+        BWPN_Lib_Log::error("error message");
+        $logs = BWPN_Lib_Db::get_logs(0, 10);
+        BWPN_Lib_Log::disable();
 
         $expected_debug = array(
             'level' => 'debug',
@@ -70,13 +70,13 @@ class LoggerTest extends WP_UnitTestCase
      */
     public function test_logger_disabled()
     {
-        Perfecty_Push_Lib_Log::disable();
+        BWPN_Lib_Log::disable();
 
-        Perfecty_Push_Lib_Log::debug("debug message");
-        Perfecty_Push_Lib_Log::info("info message");
-        Perfecty_Push_Lib_Log::warning("warning message");
-        Perfecty_Push_Lib_Log::error("error message");
-        $logs = Perfecty_Push_Lib_Db::get_logs(0, 10);
+        BWPN_Lib_Log::debug("debug message");
+        BWPN_Lib_Log::info("info message");
+        BWPN_Lib_Log::warning("warning message");
+        BWPN_Lib_Log::error("error message");
+        $logs = BWPN_Lib_Db::get_logs(0, 10);
 
         $this->assertSame(0, count($logs));
     }

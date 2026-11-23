@@ -2,27 +2,27 @@
 /**
  * Class RestGetUserTest
  *
- * @package Perfecty_Push
+ * @package BWPN
  */
 
-use Perfecty_Push_External_Uuid as Uuid;
+use BWPN_External_Uuid as Uuid;
 use DMS\PHPUnitExtensions\ArraySubset\ArraySubsetAsserts;
 
 /**
- * Test the Perfecty_Push_Users class
+ * Test the BWPN_Users class
  */
 class RestUnregisterUserTest extends WP_UnitTestCase {
 	use ArraySubsetAsserts;
 
 	public function set_up() {
 		parent::set_up();
-		activate_perfecty_push();
+		activate_bwpn();
 		$_SERVER['HTTP_X_WP_NONCE'] = wp_create_nonce( 'wp_rest' );
 	}
 
 	public function tear_down() {
 		\Mockery::close();
-		deactivate_perfecty_push();
+		deactivate_bwpn();
 		unset( $_SERVER['HTTP_X_WP_NONCE'] );
 		parent::tear_down();
 	}
@@ -31,15 +31,15 @@ class RestUnregisterUserTest extends WP_UnitTestCase {
 	 * Test unregister user
 	 */
 	public function test_unregister_user() {
-		$id           = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-		$user = Perfecty_Push_Lib_Db::get_user( $id );
+		$id           = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$user = BWPN_Lib_Db::get_user( $id );
 
 		$data        = array(
 			'user_id'   => $user->uuid,
 		);
-		$users = new Perfecty_Push_Users();
+		$users = new BWPN_Users();
 		$res         = $users->unregister( $data );
-        $deleted_user = Perfecty_Push_Lib_Db::get_user( $id );
+        $deleted_user = BWPN_Lib_Db::get_user( $id );
 
 		$this->assertSame($res->data, null);
 		$this->assertSame(200, $res->get_status());
@@ -54,7 +54,7 @@ class RestUnregisterUserTest extends WP_UnitTestCase {
 		$data        = array(
 			'user_id'   => $uuid->toString(),
 		);
-		$users = new Perfecty_Push_Users();
+		$users = new BWPN_Users();
 		$res         = $users->unregister( $data );
 
         $expected = array(
@@ -75,7 +75,7 @@ class RestUnregisterUserTest extends WP_UnitTestCase {
 		$data        = array(
 			'user_id'   => '7777777-wrong-uuid',
 		);
-		$users = new Perfecty_Push_Users();
+		$users = new BWPN_Users();
 		$res         = $users->unregister( $data );
 
 		$expected = array(
@@ -98,7 +98,7 @@ class RestUnregisterUserTest extends WP_UnitTestCase {
             'user_id'   => $uuid->toString(),
         );
 		unset( $_SERVER['HTTP_X_WP_NONCE'] );
-		$mock = Mockery::mock( Perfecty_Push_Users::class )->makePartial();
+		$mock = Mockery::mock( BWPN_Users::class )->makePartial();
 		$mock
 		->shouldReceive( 'terminate' )
 		->andReturnUsing(

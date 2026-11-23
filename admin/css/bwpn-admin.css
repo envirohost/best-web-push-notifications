@@ -1,0 +1,71 @@
+.bwpn-items-list {
+  list-style: circle;
+  list-style-position: inside;
+}
+
+.bwpn-view-form label {
+  font-weight: bold;
+}
+
+.bwpn-view-payload {
+  margin-left: 20px;
+  padding: 10px;
+  width: 500px;
+  background-color: #ffffff;
+}
+
+.bwpn-view-payload div {
+  margin: 3px;
+}
+
+.bwpn-view-payload span {
+  font-weight: bold;
+}
+
+.bwpn-view-payload-image, .bwpn-view-payload-icon {
+  max-width: 250px;
+  max-height: 250px;
+}
+
+.bwpn-default-icon-preview {
+  width: 50px;
+  height: 50px;
+}
+
+.bwpn-default-icon-preview-container {
+  display: none;
+}
+
+/* Send Notification */
+
+.bwpn-send-notification-image-preview {
+  width: 100px;
+  height: 100px;
+}
+
+.bwpn-send-notification-image-preview-container {
+  display: none;
+}
+
+.bwpn-stats > div {
+  float: left;
+  margin: 20px;
+}
+
+.bwpn-logs-table table tbody tr td{
+  font-family: monospace;
+}
+
+.bwpn-settings-form input[type=text], .bwpn-settings-form textarea {
+  width: 400px;
+}
+
+.bwpn-settings-form .form-table{
+  margin-left: 30px;
+}
+
+.bwpn-options-unregister-conflicts-regex {
+  width: 400px;
+  color: gray;
+  font-style: italic;
+}

@@ -2,14 +2,14 @@
 /**
  * Class DbTest
  *
- * @package Perfecty_Push
+ * @package BWPN
  */
 
 /**
- * Test the Perfecty_Push_Lib_Db
+ * Test the BWPN_Lib_Db
  */
 
-use Perfecty_Push_External_Uuid as Uuid;
+use BWPN_External_Uuid as Uuid;
 use DMS\PHPUnitExtensions\ArraySubset\ArraySubsetAsserts;
 
 class DbTest extends WP_UnitTestCase {
@@ -18,11 +18,11 @@ class DbTest extends WP_UnitTestCase {
 
 	public function set_up() {
 		parent::set_up();
-		activate_perfecty_push();
+		activate_bwpn();
 	}
 
 	public function tear_down() {
-		deactivate_perfecty_push();
+		deactivate_bwpn();
 		parent::tear_down();
 	}
 
@@ -32,8 +32,8 @@ class DbTest extends WP_UnitTestCase {
 	public function test_user_creation() {
 		global $wpdb;
 
-		Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-		$sql    = 'SELECT * FROM ' . $wpdb->prefix . 'perfecty_push_users';
+		BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$sql    = 'SELECT * FROM ' . $wpdb->prefix . 'bwpn_users';
 		$result = $wpdb->get_row( $sql, ARRAY_A );
 
 		$expected = array(
@@ -50,8 +50,8 @@ class DbTest extends WP_UnitTestCase {
 	 * Test that the create_user returns a valid uuid
 	 */
 	public function test_uuid_is_valid() {
-		$id           = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-		$user = Perfecty_Push_Lib_Db::get_user( $id );
+		$id           = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$user = BWPN_Lib_Db::get_user( $id );
 
 		$valid = Uuid::isValid( $user->uuid );
 		$this->assertSame( true, $valid );
@@ -61,7 +61,7 @@ class DbTest extends WP_UnitTestCase {
 	 * Test that the create_user returns false on errors
 	 */
 	public function test_user_creation_error_returns_false() {
-		$res = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', 'this_is_a_really_long_string_with_more_than_46_characters' );
+		$res = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', 'this_is_a_really_long_string_with_more_than_46_characters' );
 		$this->assertSame( false, $res );
 	}
 
@@ -69,13 +69,13 @@ class DbTest extends WP_UnitTestCase {
 	 * Test total users
 	 */
 	public function test_get_total_users() {
-		$initial = Perfecty_Push_Lib_Db::get_total_users();
-		Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_1', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-        Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1' );
-        $id3 = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1' );
-        Perfecty_Push_Lib_Db::delete_users(array($id3));
+		$initial = BWPN_Lib_Db::get_total_users();
+		BWPN_Lib_Db::create_user( 'my_endpoint_url_1', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+        BWPN_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1' );
+        $id3 = BWPN_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1' );
+        BWPN_Lib_Db::delete_users(array($id3));
 
-		$total_all = Perfecty_Push_Lib_Db::get_total_users();
+		$total_all = BWPN_Lib_Db::get_total_users();
 
 		$this->assertSame( $initial, 0 );
         $this->assertSame( $total_all, 2 );
@@ -85,11 +85,11 @@ class DbTest extends WP_UnitTestCase {
      * Test the users stats
      */
     public function test_get_users_stats() {
-        Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_1', 'my_key_auth_1', 'my_p256dh_key_1', '127.0.0.1' );
-        Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1' );
-        Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1' );
+        BWPN_Lib_Db::create_user( 'my_endpoint_url_1', 'my_key_auth_1', 'my_p256dh_key_1', '127.0.0.1' );
+        BWPN_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1' );
+        BWPN_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1' );
 
-        $result = Perfecty_Push_Lib_Db::get_users_stats();
+        $result = BWPN_Lib_Db::get_users_stats();
 
         $this->assertSame(3, $result['total']);
     }
@@ -98,12 +98,12 @@ class DbTest extends WP_UnitTestCase {
      * Test delete user by endpoint
      */
     public function test_delete_user_by_endpoint() {
-        $id1 = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_1', 'my_key_auth_1', 'my_p256dh_key_1', '127.0.0.1' );
-        $id2 = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1' );
-        Perfecty_Push_Lib_Db::delete_user_by_endpoint( 'my_endpoint_url_2');
-        $deletedUser = Perfecty_Push_Lib_Db::get_user( $id2 );
+        $id1 = BWPN_Lib_Db::create_user( 'my_endpoint_url_1', 'my_key_auth_1', 'my_p256dh_key_1', '127.0.0.1' );
+        $id2 = BWPN_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1' );
+        BWPN_Lib_Db::delete_user_by_endpoint( 'my_endpoint_url_2');
+        $deletedUser = BWPN_Lib_Db::get_user( $id2 );
 
-        $userNotTouched = Perfecty_Push_Lib_Db::get_user( $id1 );
+        $userNotTouched = BWPN_Lib_Db::get_user( $id1 );
 
         // TODO: AssertSame with booleans instead!
         $this->assertEquals( null, $deletedUser);
@@ -114,7 +114,7 @@ class DbTest extends WP_UnitTestCase {
 	 * Test get user by id
 	 */
 	public function test_get_user() {
-		$id       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$id       = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
 		$expected = array(
 			'endpoint'   => 'my_endpoint_url',
 			'key_auth'   => 'my_key_auth',
@@ -122,7 +122,7 @@ class DbTest extends WP_UnitTestCase {
 			'remote_ip'  => '127.0.0.1',
 		);
 
-		$user = Perfecty_Push_Lib_Db::get_user( $id );
+		$user = BWPN_Lib_Db::get_user( $id );
 		$this->assertArraySubset( $expected, (array) $user );
 	}
 
@@ -130,16 +130,16 @@ class DbTest extends WP_UnitTestCase {
 	 * Test get user by uuid
 	 */
 	public function test_get_user_by_uuid() {
-		$id              = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$id              = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
 		$expected        = array(
 			'endpoint'   => 'my_endpoint_url',
 			'key_auth'   => 'my_key_auth',
 			'key_p256dh' => 'my_p256dh_key',
 			'remote_ip'  => '127.0.0.1',
 		);
-		$user_db = Perfecty_Push_Lib_Db::get_user( $id );
+		$user_db = BWPN_Lib_Db::get_user( $id );
 
-		$user = Perfecty_Push_Lib_Db::get_user_by_uuid( $user_db->uuid );
+		$user = BWPN_Lib_Db::get_user_by_uuid( $user_db->uuid );
 		$this->assertArraySubset( $expected, (array) $user );
 	}
 
@@ -147,16 +147,16 @@ class DbTest extends WP_UnitTestCase {
      * Test update user
      */
     public function test_update_user() {
-        $id              = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-        $user = Perfecty_Push_Lib_Db::get_user( $id );
+        $id              = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+        $user = BWPN_Lib_Db::get_user( $id );
 
         $user->endpoint   = 'updated_my_endpoint_url';
         $user->key_auth   = 'updated_my_key_auth';
         $user->key_p256dh = 'updated_my_p256dh_key';
         $user->remote_ip  = '192.168.0.1';
 
-        Perfecty_Push_Lib_Db::update_user( $user );
-        $updated_user = Perfecty_Push_Lib_Db::get_user( $id );
+        BWPN_Lib_Db::update_user( $user );
+        $updated_user = BWPN_Lib_Db::get_user( $id );
 
         $expected        = array(
             'endpoint'   => 'updated_my_endpoint_url',
@@ -172,8 +172,8 @@ class DbTest extends WP_UnitTestCase {
 	 * Test get users
 	 */
 	public function test_get_users() {
-		$id1       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-		$id2       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2' );
+		$id1       = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$id2       = BWPN_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2' );
 		$expected1 = array(
 			'endpoint'   => 'my_endpoint_url',
 			'key_auth'   => 'my_key_auth',
@@ -187,7 +187,7 @@ class DbTest extends WP_UnitTestCase {
 			'remote_ip'  => '127.0.0.1_2',
 		);
 
-		$users = Perfecty_Push_Lib_Db::get_users( 0, 2, 'id', 'desc' );
+		$users = BWPN_Lib_Db::get_users( 0, 2, 'id', 'desc' );
 
 		$this->assertArraySubset( $expected1, (array) $users[1] );
 		$this->assertArraySubset( $expected2, (array) $users[0] );
@@ -197,10 +197,10 @@ class DbTest extends WP_UnitTestCase {
 	 * Test get users, limit/offset
 	 */
 	public function test_get_users_limit_offset() {
-		$id1       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-		$id2       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2' );
-		$id3       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1_3' );
-		$id4       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_4', 'my_key_auth_4', 'my_p256dh_key_4', '127.0.0.1_4' );
+		$id1       = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$id2       = BWPN_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2' );
+		$id3       = BWPN_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1_3' );
+		$id4       = BWPN_Lib_Db::create_user( 'my_endpoint_url_4', 'my_key_auth_4', 'my_p256dh_key_4', '127.0.0.1_4' );
 		$expected2 = array(
 			'endpoint'   => 'my_endpoint_url_2',
 			'key_auth'   => 'my_key_auth_2',
@@ -214,7 +214,7 @@ class DbTest extends WP_UnitTestCase {
 			'remote_ip'  => '127.0.0.1_3',
 		);
 
-		$users = Perfecty_Push_Lib_Db::get_users( 1, 2 );
+		$users = BWPN_Lib_Db::get_users( 1, 2 );
 
 		$this->assertSame( 2, count( $users ) );
 		$this->assertArraySubset( $expected2, (array) $users[0] );
@@ -225,7 +225,7 @@ class DbTest extends WP_UnitTestCase {
 	 * Test get users, empty
 	 */
 	public function test_get_users_empty() {
-		$users = Perfecty_Push_Lib_Db::get_users( 0, 2 );
+		$users = BWPN_Lib_Db::get_users( 0, 2 );
 		$this->assertSame( array(), $users );
 	}
 
@@ -233,9 +233,9 @@ class DbTest extends WP_UnitTestCase {
      * Test get users by wp user_id
      */
     public function test_get_users_by_wp_user_id() {
-        $id1       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1', 77 );
-        $id2       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2', 77 );
-        $id3       = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1_3');
+        $id1       = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1', 77 );
+        $id2       = BWPN_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2', 77 );
+        $id3       = BWPN_Lib_Db::create_user( 'my_endpoint_url_3', 'my_key_auth_3', 'my_p256dh_key_3', '127.0.0.1_3');
         $expected1 = array(
             'endpoint'   => 'my_endpoint_url',
             'key_auth'   => 'my_key_auth',
@@ -251,7 +251,7 @@ class DbTest extends WP_UnitTestCase {
             'wp_user_id'      => 77
         );
 
-        $users = Perfecty_Push_Lib_Db::get_users_by_wp_user_id(77);
+        $users = BWPN_Lib_Db::get_users_by_wp_user_id(77);
 
         $this->assertArraySubset( $expected1, (array) $users[0] );
         $this->assertArraySubset( $expected2, (array) $users[1] );
@@ -262,12 +262,12 @@ class DbTest extends WP_UnitTestCase {
 	 * Test delete users
 	 */
 	public function test_delete_users() {
-		$id1          = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
-		$id2          = Perfecty_Push_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2' );
-		$users_before = Perfecty_Push_Lib_Db::get_users(0, 30);
+		$id1          = BWPN_Lib_Db::create_user( 'my_endpoint_url', 'my_key_auth', 'my_p256dh_key', '127.0.0.1' );
+		$id2          = BWPN_Lib_Db::create_user( 'my_endpoint_url_2', 'my_key_auth_2', 'my_p256dh_key_2', '127.0.0.1_2' );
+		$users_before = BWPN_Lib_Db::get_users(0, 30);
 
-		$total = Perfecty_Push_Lib_Db::delete_users([$id1, $id2]);
-		$users_after = Perfecty_Push_Lib_Db::get_users(0, 30);
+		$total = BWPN_Lib_Db::delete_users([$id1, $id2]);
+		$users_after = BWPN_Lib_Db::get_users(0, 30);
 
 		$this->assertSame($total, 2);
 		$this->assertSame(count($users_before), 2);
@@ -280,8 +280,8 @@ class DbTest extends WP_UnitTestCase {
 	public function test_user_create_notification() {
 		global $wpdb;
 
-		Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$sql    = 'SELECT * FROM ' . $wpdb->prefix . 'perfecty_push_notifications';
+		BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$sql    = 'SELECT * FROM ' . $wpdb->prefix . 'bwpn_notifications';
 		$result = $wpdb->get_row( $sql, ARRAY_A );
 
 		$expected = array(
@@ -301,12 +301,12 @@ class DbTest extends WP_UnitTestCase {
 	 * Test delete notifications
 	 */
 	public function test_delete_notification() {
-		$id1 = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$id2 = Perfecty_Push_Lib_Db::create_notification( 'my_payload_2', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$notifications_before = Perfecty_Push_Lib_Db::get_notifications(0, 30);
+		$id1 = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$id2 = BWPN_Lib_Db::create_notification( 'my_payload_2', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$notifications_before = BWPN_Lib_Db::get_notifications(0, 30);
 
-		$total = Perfecty_Push_Lib_Db::delete_notifications([$id1, $id2]);
-		$notifications_after = Perfecty_Push_Lib_Db::get_notifications(0, 30);
+		$total = BWPN_Lib_Db::delete_notifications([$id1, $id2]);
+		$notifications_after = BWPN_Lib_Db::get_notifications(0, 30);
 
 		$this->assertSame($total, 2);
 		$this->assertSame(count($notifications_before), 2);
@@ -317,7 +317,7 @@ class DbTest extends WP_UnitTestCase {
 	 * Test that the create notification returns false on errors
 	 */
 	public function test_notification_creation_error_returns_false() {
-		$res = Perfecty_Push_Lib_Db::create_notification( 'my_payload', 'this_is_a_very_long_status', 35, 20 );
+		$res = BWPN_Lib_Db::create_notification( 'my_payload', 'this_is_a_very_long_status', 35, 20 );
 		$this->assertSame( false, $res );
 	}
 
@@ -325,7 +325,7 @@ class DbTest extends WP_UnitTestCase {
 	 * Test that it gets a notification by id
 	 */
 	public function test_get_notification() {
-		$id       = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$id       = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
 		$expected = array(
 			'payload'     => 'my_payload',
 			'total'       => 35,
@@ -336,7 +336,7 @@ class DbTest extends WP_UnitTestCase {
 			'is_taken'    => 0,
 		);
 
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$notification = BWPN_Lib_Db::get_notification( $id );
 		$this->assertArraySubset( $expected, (array) $notification );
 	}
 
@@ -344,9 +344,9 @@ class DbTest extends WP_UnitTestCase {
 	 * Test that it gets a notifications
 	 */
 	public function test_get_notifications() {
-		$id1       = Perfecty_Push_Lib_Db::create_notification( 'my_payload1', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$id2       = Perfecty_Push_Lib_Db::create_notification( 'my_payload2', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 43, 17 );
-		$id3       = Perfecty_Push_Lib_Db::create_notification( 'my_payload3', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_FAILED, 55, 88 );
+		$id1       = BWPN_Lib_Db::create_notification( 'my_payload1', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$id2       = BWPN_Lib_Db::create_notification( 'my_payload2', BWPN_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 43, 17 );
+		$id3       = BWPN_Lib_Db::create_notification( 'my_payload3', BWPN_Lib_Db::NOTIFICATIONS_STATUS_FAILED, 55, 88 );
 		$expected1 = array(
 			'payload'     => 'my_payload1',
 			'total'       => 35,
@@ -376,7 +376,7 @@ class DbTest extends WP_UnitTestCase {
 			'status'      => 'failed',
 			'is_taken'    => 0,
 		);
-		$notifications = Perfecty_Push_Lib_Db::get_notifications(0, 5, 'id', 'desc');
+		$notifications = BWPN_Lib_Db::get_notifications(0, 5, 'id', 'desc');
 		$this->assertSame( 3, count($notifications) );
 		$this->assertArraySubset( $expected1, (array) $notifications[2] );
 		$this->assertArraySubset( $expected2, (array) $notifications[1] );
@@ -387,10 +387,10 @@ class DbTest extends WP_UnitTestCase {
 	 * Test the total notifications
 	 */
 	public function test_total_notifications() {
-		$id1       = Perfecty_Push_Lib_Db::create_notification( 'my_payload1', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$id2       = Perfecty_Push_Lib_Db::create_notification( 'my_payload2', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 43, 17 );
+		$id1       = BWPN_Lib_Db::create_notification( 'my_payload1', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$id2       = BWPN_Lib_Db::create_notification( 'my_payload2', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 43, 17 );
 
-		$total = Perfecty_Push_Lib_Db::get_notifications_total();
+		$total = BWPN_Lib_Db::get_notifications_total();
 		$this->assertSame(2, $total);
 	}
 
@@ -398,30 +398,30 @@ class DbTest extends WP_UnitTestCase {
      * Test the notifications stats
      */
     public function test_get_notifications_stats() {
-        $id1       = Perfecty_Push_Lib_Db::create_notification( 'my_payload1', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 10, 20 );
-	    $id2       = Perfecty_Push_Lib_Db::create_notification( 'my_payload2', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_FAILED, 5, 20 );
-	    $id3       = Perfecty_Push_Lib_Db::create_notification( 'my_payload3', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_CANCELED, 7, 17 );
-	    $id4       = Perfecty_Push_Lib_Db::create_notification( 'my_payload3', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 3, 17 );
+        $id1       = BWPN_Lib_Db::create_notification( 'my_payload1', BWPN_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 10, 20 );
+	    $id2       = BWPN_Lib_Db::create_notification( 'my_payload2', BWPN_Lib_Db::NOTIFICATIONS_STATUS_FAILED, 5, 20 );
+	    $id3       = BWPN_Lib_Db::create_notification( 'my_payload3', BWPN_Lib_Db::NOTIFICATIONS_STATUS_CANCELED, 7, 17 );
+	    $id4       = BWPN_Lib_Db::create_notification( 'my_payload3', BWPN_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 3, 17 );
         // this one should not count in the stats
-        Perfecty_Push_Lib_Db::create_notification( 'my_payload4', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 10, 17 );
+        BWPN_Lib_Db::create_notification( 'my_payload4', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 10, 17 );
 
-        $notification_1 = Perfecty_Push_Lib_Db::get_notification($id1);
+        $notification_1 = BWPN_Lib_Db::get_notification($id1);
         $notification_1->succeeded = 10;
-        Perfecty_Push_Lib_Db::update_notification($notification_1);
-        $notification_2 = Perfecty_Push_Lib_Db::get_notification($id2);
+        BWPN_Lib_Db::update_notification($notification_1);
+        $notification_2 = BWPN_Lib_Db::get_notification($id2);
         $notification_2->succeeded = 2;
         $notification_2->failed = 3;
-        Perfecty_Push_Lib_Db::update_notification($notification_2);
-	    $notification_3 = Perfecty_Push_Lib_Db::get_notification($id3);
+        BWPN_Lib_Db::update_notification($notification_2);
+	    $notification_3 = BWPN_Lib_Db::get_notification($id3);
 	    $notification_3->succeeded = 3;
 	    $notification_3->failed = 2;
-	    Perfecty_Push_Lib_Db::update_notification($notification_3);
-	    $notification_4 = Perfecty_Push_Lib_Db::get_notification($id4);
+	    BWPN_Lib_Db::update_notification($notification_3);
+	    $notification_4 = BWPN_Lib_Db::get_notification($id4);
 	    $notification_4->succeeded = 1;
 	    $notification_4->failed = 1;
-	    Perfecty_Push_Lib_Db::update_notification($notification_4);
+	    BWPN_Lib_Db::update_notification($notification_4);
 
-	    $result = Perfecty_Push_Lib_Db::get_notifications_stats();
+	    $result = BWPN_Lib_Db::get_notifications_stats();
 
         $this->assertSame(25, $result['total']);
         $this->assertSame(16, $result['succeeded']);
@@ -432,29 +432,29 @@ class DbTest extends WP_UnitTestCase {
      * Test the notifications daily stats
      */
     public function test_get_notifications_daily_stats() {
-        $id1       = Perfecty_Push_Lib_Db::create_notification( 'my_payload1', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 35, 20 );
-        $id2       = Perfecty_Push_Lib_Db::create_notification( 'my_payload2', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 45, 17 );
-        $id3       = Perfecty_Push_Lib_Db::create_notification( 'my_payload3', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 10, 17 );
-        Perfecty_Push_Lib_Db::create_notification( 'my_payload4', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 10, 17 );
-        Perfecty_Push_Lib_Db::create_notification( 'my_payload5', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 10, 17 );
+        $id1       = BWPN_Lib_Db::create_notification( 'my_payload1', BWPN_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 35, 20 );
+        $id2       = BWPN_Lib_Db::create_notification( 'my_payload2', BWPN_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 45, 17 );
+        $id3       = BWPN_Lib_Db::create_notification( 'my_payload3', BWPN_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 10, 17 );
+        BWPN_Lib_Db::create_notification( 'my_payload4', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 10, 17 );
+        BWPN_Lib_Db::create_notification( 'my_payload5', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 10, 17 );
 
-        $notification_1 = Perfecty_Push_Lib_Db::get_notification($id1);
+        $notification_1 = BWPN_Lib_Db::get_notification($id1);
         $notification_1->succeeded = 10;
         $notification_1->failed = 25;
-        Perfecty_Push_Lib_Db::update_notification($notification_1);
-        $notification_2 = Perfecty_Push_Lib_Db::get_notification($id2);
+        BWPN_Lib_Db::update_notification($notification_1);
+        $notification_2 = BWPN_Lib_Db::get_notification($id2);
         $notification_2->succeeded = 44;
 	    $notification_2->failed = 1;
-	    Perfecty_Push_Lib_Db::update_notification($notification_2);
-        $notification_3 = Perfecty_Push_Lib_Db::get_notification($id3);
+	    BWPN_Lib_Db::update_notification($notification_2);
+        $notification_3 = BWPN_Lib_Db::get_notification($id3);
         $notification_3->succeeded = 5;
         $notification_3->failed = 3;
-        Perfecty_Push_Lib_Db::update_notification($notification_3);
+        BWPN_Lib_Db::update_notification($notification_3);
 
         $end_date = new DateTime();
         $start_date = new DateTime();
         $start_date->sub(new DateInterval('P7D'));
-        $results = Perfecty_Push_Lib_Db::get_notifications_daily_stats($start_date, $end_date);
+        $results = BWPN_Lib_Db::get_notifications_daily_stats($start_date, $end_date);
 
         $today = date('Y-m-d');
 
@@ -468,14 +468,14 @@ class DbTest extends WP_UnitTestCase {
      * Test the notifications stats
      */
     public function test_get_jobs_stats() {
-        $id1       = Perfecty_Push_Lib_Db::create_notification( 'my_payload1', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-        $id2       = Perfecty_Push_Lib_Db::create_notification( 'my_payload2', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 45, 17 );
-        $id3       = Perfecty_Push_Lib_Db::create_notification( 'my_payload3', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 10, 11 );
-        $id4       = Perfecty_Push_Lib_Db::create_notification( 'my_payload4', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_FAILED, 7, 21 );
-        $id5       = Perfecty_Push_Lib_Db::create_notification( 'my_payload5', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 27, 30 );
-	    $id6       = Perfecty_Push_Lib_Db::create_notification( 'my_payload5', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_CANCELED, 17, 30 );
+        $id1       = BWPN_Lib_Db::create_notification( 'my_payload1', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+        $id2       = BWPN_Lib_Db::create_notification( 'my_payload2', BWPN_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 45, 17 );
+        $id3       = BWPN_Lib_Db::create_notification( 'my_payload3', BWPN_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED, 10, 11 );
+        $id4       = BWPN_Lib_Db::create_notification( 'my_payload4', BWPN_Lib_Db::NOTIFICATIONS_STATUS_FAILED, 7, 21 );
+        $id5       = BWPN_Lib_Db::create_notification( 'my_payload5', BWPN_Lib_Db::NOTIFICATIONS_STATUS_RUNNING, 27, 30 );
+	    $id6       = BWPN_Lib_Db::create_notification( 'my_payload5', BWPN_Lib_Db::NOTIFICATIONS_STATUS_CANCELED, 17, 30 );
 
-	    $result = Perfecty_Push_Lib_Db::get_jobs_stats();
+	    $result = BWPN_Lib_Db::get_jobs_stats();
 
         $this->assertSame(1, $result['scheduled']);
         $this->assertSame(2, $result['running']);
@@ -489,8 +489,8 @@ class DbTest extends WP_UnitTestCase {
 	 */
 	public function test_get_notification_fake_id() {
 		$fake_id = 111111117;
-		Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$result = Perfecty_Push_Lib_Db::get_notification( $fake_id );
+		BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$result = BWPN_Lib_Db::get_notification( $fake_id );
 		$this->assertSame( null, $result );
 	}
 
@@ -498,10 +498,10 @@ class DbTest extends WP_UnitTestCase {
 	 * Test take notification
 	 */
 	public function test_take_notification() {
-		$id           = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
-		Perfecty_Push_Lib_Db::take_notification( $id );
-		$taken_notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$id           = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$notification = BWPN_Lib_Db::get_notification( $id );
+		BWPN_Lib_Db::take_notification( $id );
+		$taken_notification = BWPN_Lib_Db::get_notification( $id );
 		$this->assertEquals( 0, $notification->is_taken );
 		$this->assertEquals( 1, $taken_notification->is_taken );
 	}
@@ -510,12 +510,12 @@ class DbTest extends WP_UnitTestCase {
 	 * Test untake notification
 	 */
 	public function test_untake_notification() {
-		$id           = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
-		Perfecty_Push_Lib_Db::take_notification( $id );
-		$taken_notification = Perfecty_Push_Lib_Db::get_notification( $id );
-		Perfecty_Push_Lib_Db::untake_notification( $id );
-		$untaken_notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$id           = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$notification = BWPN_Lib_Db::get_notification( $id );
+		BWPN_Lib_Db::take_notification( $id );
+		$taken_notification = BWPN_Lib_Db::get_notification( $id );
+		BWPN_Lib_Db::untake_notification( $id );
+		$untaken_notification = BWPN_Lib_Db::get_notification( $id );
 
 		$this->assertEquals( 0, $notification->is_taken );
 		$this->assertEquals( 1, $taken_notification->is_taken );
@@ -526,19 +526,19 @@ class DbTest extends WP_UnitTestCase {
 	 * Test update notification
 	 */
 	public function test_update_notification() {
-		$id           = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$id           = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$notification = BWPN_Lib_Db::get_notification( $id );
 
 		$notification->payload     = 'updated_payload';
 		$notification->total       = 7;
 		$notification->succeeded   = 1;
 		$notification->last_cursor = 12;
 		$notification->batch_size  = 75;
-		$notification->status      = Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED;
+		$notification->status      = BWPN_Lib_Db::NOTIFICATIONS_STATUS_COMPLETED;
 		$notification->is_taken    = 1;
 
-		Perfecty_Push_Lib_Db::update_notification( $notification );
-		$updated_notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		BWPN_Lib_Db::update_notification( $notification );
+		$updated_notification = BWPN_Lib_Db::get_notification( $id );
 
 		$expected = array(
 			'payload'     => 'updated_payload',
@@ -557,11 +557,11 @@ class DbTest extends WP_UnitTestCase {
 	 * Test update notification, non existing
 	 */
 	public function test_update_notification_error() {
-		$id           = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$id           = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$notification = BWPN_Lib_Db::get_notification( $id );
 
 		$notification->id = 22222112111;
-		$res              = Perfecty_Push_Lib_Db::update_notification( $notification );
+		$res              = BWPN_Lib_Db::update_notification( $notification );
 		$this->assertSame( 0, $res );
 	}
 
@@ -569,11 +569,11 @@ class DbTest extends WP_UnitTestCase {
 	 * Test mark notification as failed
 	 */
 	public function test_mark_notification_as_failed() {
-		$id           = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$id           = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$notification = BWPN_Lib_Db::get_notification( $id );
 
-		Perfecty_Push_Lib_Db::mark_notification_failed( $id );
-		$failed_notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		BWPN_Lib_Db::mark_notification_failed( $id );
+		$failed_notification = BWPN_Lib_Db::get_notification( $id );
 		$this->assertSame( 'scheduled', $notification->status );
 		$this->assertSame( 'failed', $failed_notification->status );
 	}
@@ -582,11 +582,11 @@ class DbTest extends WP_UnitTestCase {
 	 * Test mark notification as completed
 	 */
 	public function test_mark_notification_as_completed() {
-		$id           = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$id           = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		$notification = BWPN_Lib_Db::get_notification( $id );
 
-		Perfecty_Push_Lib_Db::mark_notification_completed( $id );
-		$completed_notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		BWPN_Lib_Db::mark_notification_completed( $id );
+		$completed_notification = BWPN_Lib_Db::get_notification( $id );
 		$this->assertSame( 'scheduled', $notification->status );
 		$this->assertSame( 'completed', $completed_notification->status );
 	}
@@ -595,12 +595,12 @@ class DbTest extends WP_UnitTestCase {
 	 * Test mark notification as completed un untake
 	 */
 	public function test_mark_notification_as_completed_untake() {
-		$id = Perfecty_Push_Lib_Db::create_notification( 'my_payload', Perfecty_Push_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
-		Perfecty_Push_Lib_Db::take_notification( $id );
-		$notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		$id = BWPN_Lib_Db::create_notification( 'my_payload', BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, 35, 20 );
+		BWPN_Lib_Db::take_notification( $id );
+		$notification = BWPN_Lib_Db::get_notification( $id );
 
-		Perfecty_Push_Lib_Db::mark_notification_completed_untake( $id );
-		$completed_notification = Perfecty_Push_Lib_Db::get_notification( $id );
+		BWPN_Lib_Db::mark_notification_completed_untake( $id );
+		$completed_notification = BWPN_Lib_Db::get_notification( $id );
 		$this->assertSame( 'scheduled', $notification->status );
 		$this->assertEquals( 1, $notification->is_taken );
 		$this->assertSame( 'completed', $completed_notification->status );
@@ -612,10 +612,10 @@ class DbTest extends WP_UnitTestCase {
      * Test insert log
      */
     public function test_insert_log() {
-        Perfecty_Push_Lib_Db::insert_log( 'debug', 'my test debug message' );
-        Perfecty_Push_Lib_Db::insert_log( 'info', 'my test info message' );
+        BWPN_Lib_Db::insert_log( 'debug', 'my test debug message' );
+        BWPN_Lib_Db::insert_log( 'info', 'my test info message' );
 
-        $logs = Perfecty_Push_Lib_Db::get_logs(0, 10);
+        $logs = BWPN_Lib_Db::get_logs(0, 10);
 
         $expected_debug = array(
             'level' => 'debug',
@@ -634,11 +634,11 @@ class DbTest extends WP_UnitTestCase {
      * Test total logs
      */
     public function test_get_total_logs() {
-        $initial = Perfecty_Push_Lib_Db::get_total_logs();
-        Perfecty_Push_Lib_Db::insert_log( 'info', 'my test info message' );
-        Perfecty_Push_Lib_Db::insert_log( 'debug', 'my test debug message' );
+        $initial = BWPN_Lib_Db::get_total_logs();
+        BWPN_Lib_Db::insert_log( 'info', 'my test info message' );
+        BWPN_Lib_Db::insert_log( 'debug', 'my test debug message' );
 
-        $total = Perfecty_Push_Lib_Db::get_total_logs();
+        $total = BWPN_Lib_Db::get_total_logs();
 
         $this->assertSame( $initial, 0 );
         $this->assertSame( $total, 2 );

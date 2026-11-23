@@ -1,0 +1,345 @@
+<?php
+
+/**
+ * The file that defines the core plugin class
+ *
+ * A class definition that includes attributes and functions used across both the
+ * public-facing side of the site and the admin area.
+ *
+ * @link       https://github.com/rwngallego
+ * @since      1.0.0
+ *
+ * @package    BWPN
+ * @subpackage BWPN/includes
+ */
+
+/**
+ * The core plugin class.
+ *
+ * This is used to define internationalization, admin-specific hooks, and
+ * public-facing site hooks.
+ *
+ * Also maintains the unique identifier of this plugin as well as the current
+ * version of the plugin.
+ *
+ * @since      1.0.0
+ * @package    BWPN
+ * @subpackage BWPN/includes
+ * @author     Rowinson Gallego <rwn.gallego@gmail.com>
+ */
+class BWPN {
+
+	/**
+	 * The loader that's responsible for maintaining and registering all hooks that power
+	 * the plugin.
+	 *
+	 * @since    1.0.0
+	 * @access   protected
+	 * @var      BWPN_Loader    $loader    Maintains and registers all hooks for the plugin.
+	 */
+	protected $loader;
+
+	/**
+	 * The unique identifier of this plugin.
+	 *
+	 * @since    1.0.0
+	 * @access   protected
+	 * @var      string    $plugin_name    The string used to uniquely identify this plugin.
+	 */
+	protected $plugin_name;
+
+	/**
+	 * The current version of the plugin.
+	 *
+	 * @since    1.0.0
+	 * @access   protected
+	 * @var      string    $version    The current version of the plugin.
+	 */
+	protected $version;
+
+	/**
+	 * Define the core functionality of the plugin.
+	 *
+	 * Set the plugin name and the plugin version that can be used throughout the plugin.
+	 * Load the dependencies, define the locale, and set the hooks for the admin area and
+	 * the public-facing side of the site.
+	 *
+	 * @since    1.0.0
+	 */
+	public function __construct() {
+		if ( defined( 'BWPN_VERSION' ) ) {
+			$this->version = BWPN_VERSION;
+		} else {
+			$this->version = '1.0.0';
+		}
+		$this->plugin_name = 'bwpn';
+
+		$this->define_constants();
+		$this->load_dependencies();
+		$this->load_logger();
+		$this->set_locale();
+		if ( BWPN_Lib_Utils::is_enabled() ) {
+			$this->load_push_server();
+		}
+		$this->define_global_hooks();
+		$this->define_admin_hooks();
+		$this->define_public_hooks();
+	}
+
+	/**
+	 * Define the constants that will be needed later
+	 */
+	public function define_constants() {
+		$options              = get_option( 'bwpn_settings', array() );
+		$vapid_public_key     = isset( $options['vapid_public_key'] ) ? $options['vapid_public_key'] : '';
+		$vapid_private_key    = isset( $options['vapid_private_key'] ) ? $options['vapid_private_key'] : '';
+		$service_worker_scope = isset( $options['service_worker_scope'] ) && ! empty( $options['service_worker_scope'] ) ? $options['service_worker_scope'] : '/bwpn/push/';
+
+		if ( ! defined( 'BWPN_JS_DIR' ) ) {
+			$path = plugin_dir_url( __DIR__ ) . 'public/js';
+			define( 'BWPN_JS_DIR', $path );
+		}
+		if ( ! defined( 'BWPN_SERVICE_WORKER_SCOPE' ) ) {
+			define( 'BWPN_SERVICE_WORKER_SCOPE', $service_worker_scope );
+		}
+		if ( ! defined( 'BWPN_VAPID_PUBLIC_KEY' ) && $vapid_public_key ) {
+			define( 'BWPN_VAPID_PUBLIC_KEY', $vapid_public_key );
+		}
+		if ( ! defined( 'BWPN_VAPID_PRIVATE_KEY' ) && $vapid_private_key ) {
+			define( 'BWPN_VAPID_PRIVATE_KEY', $vapid_private_key );
+		}
+
+		if ( ! defined( 'BWPN_UNREGISTER_CONFLICTS_EXPRESSION' ) ) {
+			define(
+				'BWPN_UNREGISTER_CONFLICTS_EXPRESSION',
+				'(OneSignalSDKWorker|wonderpush-worker-loader|webpushr-sw|subscribers-com\/firebase-messaging-sw|gravitec-net-web-push-notifications|push_notification_sw)'
+			);
+		}
+	}
+
+	/**
+	 * Load the required dependencies for this plugin.
+	 *
+	 * Include the following files that make up the plugin:
+	 *
+	 * - BWPN_Loader. Orchestrates the hooks of the plugin.
+	 * - BWPN_i18n. Defines internationalization functionality.
+	 * - BWPN_Admin. Defines all hooks for the admin area.
+	 * - BWPN_Public. Defines all hooks for the public side of the site.
+	 *
+	 * Create an instance of the loader which will be used to register the hooks
+	 * with WordPress.
+	 *
+	 * @since    1.0.0
+	 * @access   private
+	 */
+	private function load_dependencies() {
+
+		/**
+		 * The class responsible for orchestrating the actions and filters of the
+		 * core plugin.
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-bwpn-loader.php';
+
+		/**
+		 * The class responsible for the global hooks
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-bwpn-global.php';
+
+		/**
+		 * The class responsible for defining internationalization functionality
+		 * of the plugin.
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'includes/class-bwpn-i18n.php';
+
+		/**
+		 * The class responsible for defining all actions that occur in the admin area.
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'admin/class-bwpn-admin.php';
+
+		/**
+		 * The class responsible for defining all actions that occur in the public-facing
+		 * side of the site.
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'public/class-bwpn-public.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'public/class-bwpn-users.php';
+
+		/**
+		 * Contains the form tables
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'admin/class-bwpn-admin-notifications-table.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'admin/class-bwpn-admin-users-table.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'admin/class-bwpn-admin-logs-table.php';
+
+		/**
+		 * Contains the lib/ and external/ definitions
+		 */
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/class-bwpn-lib-db.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/class-bwpn-lib-push-server.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/class-bwpn-lib-payload.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/class-bwpn-lib-log.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/log/class-bwpn-lib-log-writer.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/log/class-bwpn-lib-log-db.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/log/class-bwpn-lib-log-errorlog.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'lib/class-bwpn-lib-cron-check.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'external/class-bwpn-external-uuid.php';
+		require_once plugin_dir_path( dirname( __FILE__ ) ) . 'external/class-bwpn-external-webpush.php';
+		$this->loader = new BWPN_Loader();
+	}
+
+	/**
+	 * Loads the logger library
+	 */
+	public function load_logger() {
+		$options = get_option( 'bwpn_settings', array() );
+		$driver  = $options['log_driver'] ?? 'errorlog';
+		$level   = $options['log_level'] ?? 'error';
+
+		if ( $driver === 'db' ) {
+			$logger = new BWPN_Lib_Log_Db();
+			$logger->delete_old_logs( 10 );
+		} else {
+			$logger = new BWPN_Lib_Log_ErrorLog();
+		}
+		BWPN_Lib_Log::init( $logger, BWPN_Lib_Log::string_to_level( $level ) );
+	}
+
+	/**
+	 * Define the locale for this plugin for internationalization.
+	 *
+	 * Uses the BWPN_i18n class in order to set the domain and to register the hook
+	 * with WordPress.
+	 *
+	 * @since    1.0.0
+	 * @access   private
+	 */
+	private function set_locale() {
+		$plugin_i18n = new BWPN_i18n();
+
+		$this->loader->add_action( 'init', $plugin_i18n, 'load_plugin_textdomain' );
+	}
+
+	/**
+	 * Bootstrap the Push Server
+	 *
+	 * @since    1.0.0
+	 * @access   private
+	 */
+	private function load_push_server() {
+		$auth             = array();
+		$plugin_activated = get_option( 'bwpn_activated', 0 );
+
+		if ( defined( 'BWPN_VAPID_PUBLIC_KEY' ) && defined( 'BWPN_VAPID_PRIVATE_KEY' )
+		&& BWPN_VAPID_PUBLIC_KEY && BWPN_VAPID_PRIVATE_KEY ) {
+			$auth = array(
+				'VAPID' => array(
+					'subject'    => site_url(),
+					'publicKey'  => BWPN_VAPID_PUBLIC_KEY,
+					'privateKey' => BWPN_VAPID_PRIVATE_KEY,
+				),
+			);
+		} elseif ( $plugin_activated == 1 ) {
+			error_log( 'VAPID Keys are missing' );
+			BWPN_Lib_Utils::show_message( sprintf( esc_html( 'The VAPID keys are missing in Best Web Push. Help: %1$s Generate the VAPID Keys. %2$s', 'best-web-push-notifications' ), "<a href='https://docs.perfecty.org/wp/troubleshooting/#the-vapid-keys-are-missing-in-bwpn-generate-the-vapid-keys' target='_blank'>", '</a>' ), 'warning' );
+			BWPN_Lib_Utils::disable();
+			return false;
+		}
+		$vapid_generator = array( 'BWPN_External_Webpush', 'createVapidKeys' );
+
+		BWPN_Lib_Push_Server::bootstrap( $auth, $vapid_generator );
+		return true;
+	}
+
+	/**
+	 * Register the global hooks that are not related to admin or public
+	 *
+	 * @since    1.0.0
+	 * @access   private
+	 */
+	private function define_global_hooks() {
+		$global = new BWPN_Global();
+		$this->loader->add_action( 'plugins_loaded', $global, 'upgrade_check' );
+	}
+
+	/**
+	 * Register all of the hooks related to the admin area functionality
+	 * of the plugin.
+	 *
+	 * @since    1.0.0
+	 * @access   private
+	 */
+	private function define_admin_hooks() {
+		$plugin_admin = new BWPN_Admin( $this->get_plugin_name(), $this->get_version() );
+
+		$this->loader->add_action( BWPN_Lib_Cron_Check::HOOK, BWPN_Lib_Cron_Check::class, 'tick' );
+		$this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_styles' );
+		$this->loader->add_action( 'admin_enqueue_scripts', $plugin_admin, 'enqueue_scripts' );
+		$this->loader->add_action( 'admin_menu', $plugin_admin, 'register_admin_menu' );
+		$this->loader->add_action( 'admin_init', $plugin_admin, 'register_options' );
+		$this->loader->add_action( 'admin_init', $plugin_admin, 'check_cron' );
+		$this->loader->add_action( BWPN_Lib_Push_Server::BROADCAST_HOOK, $plugin_admin, 'execute_broadcast_batch', 10, 1 );
+		$this->loader->add_action( 'add_meta_boxes', $plugin_admin, 'register_metaboxes' );
+		$this->loader->add_action( 'save_post', $plugin_admin, 'on_save_post' );
+		$this->loader->add_action( 'transition_post_status', $plugin_admin, 'on_transition_post_status', 10, 3 );
+		$this->loader->add_action( 'publish_future_post', $plugin_admin, 'on_publish_future_post', 10, 1 );
+		$this->loader->add_action( 'admin_notices', $plugin_admin, 'show_admin_notice' );
+		$this->loader->add_filter( 'plugin_action_links_' . BWPN_BASENAME, $plugin_admin, 'plugin_directory_links' );
+	}
+
+	/**
+	 * Register all of the hooks related to the public-facing functionality
+	 * of the plugin.
+	 *
+	 * @since    1.0.0
+	 * @access   private
+	 */
+	private function define_public_hooks() {
+		$plugin_public = new BWPN_Public( $this->get_plugin_name(), $this->get_version() );
+
+		$this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_styles' );
+		$this->loader->add_action( 'wp_enqueue_scripts', $plugin_public, 'enqueue_scripts' );
+		$this->loader->add_action( 'wp_head', $plugin_public, 'print_head' );
+		$this->loader->add_action( 'rest_api_init', $plugin_public, 'register_rest_endpoints' );
+	}
+
+	/**
+	 * Run the loader to execute all of the hooks with WordPress.
+	 *
+	 * @since    1.0.0
+	 */
+	public function run() {
+		$this->loader->run();
+	}
+
+	/**
+	 * The name of the plugin used to uniquely identify it within the context of
+	 * WordPress and to define internationalization functionality.
+	 *
+	 * @since     1.0.0
+	 * @return    string    The name of the plugin.
+	 */
+	public function get_plugin_name() {
+		return $this->plugin_name;
+	}
+
+	/**
+	 * The reference to the class that orchestrates the hooks with the plugin.
+	 *
+	 * @since     1.0.0
+	 * @return    BWPN_Loader    Orchestrates the hooks of the plugin.
+	 */
+	public function get_loader() {
+		return $this->loader;
+	}
+
+	/**
+	 * Retrieve the version number of the plugin.
+	 *
+	 * @since     1.0.0
+	 * @return    string    The version number of the plugin.
+	 */
+	public function get_version() {
+		return $this->version;
+	}
+
+}

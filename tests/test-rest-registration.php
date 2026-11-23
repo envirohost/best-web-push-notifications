@@ -3,11 +3,11 @@
 /**
  * Class RestRegistrationTest
  *
- * @package Perfecty_Push
+ * @package BWPN
  */
 
 /**
- * Test the Perfecty_Push_Users class
+ * Test the BWPN_Users class
  */
 
 use DMS\PHPUnitExtensions\ArraySubset\ArraySubsetAsserts;
@@ -17,18 +17,18 @@ class RestRegistrationTest extends WP_UnitTestCase {
 
 	public function set_up() {
 		parent::set_up();
-		activate_perfecty_push();
+		activate_bwpn();
 
 		$_SERVER['HTTP_X_WP_NONCE'] = wp_create_nonce( 'wp_rest' );
-		if ( ! defined( 'PERFECTY_PUSH_VAPID_PRIVATE_KEY' ) && ! defined( 'PERFECTY_PUSH_VAPID_PUBLIC_KEY' ) ) {
-			define( 'PERFECTY_PUSH_VAPID_PRIVATE_KEY', 'test_private_key' );
-			define( 'PERFECTY_PUSH_VAPID_PUBLIC_KEY', 'test_public_key' );
+		if ( ! defined( 'BWPN_VAPID_PRIVATE_KEY' ) && ! defined( 'BWPN_VAPID_PUBLIC_KEY' ) ) {
+			define( 'BWPN_VAPID_PRIVATE_KEY', 'test_private_key' );
+			define( 'BWPN_VAPID_PUBLIC_KEY', 'test_public_key' );
 		}
 	}
 
 	public function tear_down() {
 		\Mockery::close();
-		deactivate_perfecty_push();
+		deactivate_bwpn();
 		unset( $_SERVER['HTTP_X_WP_NONCE'] );
 		parent::tear_down();
 	}
@@ -37,7 +37,7 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test the user registration
 	 */
 	public function test_registration_new() {
-		$registration         = new Perfecty_Push_Users();
+		$registration         = new BWPN_Users();
 		$data                 = array(
 			'user'       => array(
 				'endpoint' => 'http://my_endpoint',
@@ -63,11 +63,11 @@ class RestRegistrationTest extends WP_UnitTestCase {
 			)
 		)
 			->once();
-		Perfecty_Push_Lib_Push_Server::bootstrap( array(), 'md5', $mocked_server );
+		BWPN_Lib_Push_Server::bootstrap( array(), 'md5', $mocked_server );
 
-		$previous_users = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$previous_users = BWPN_Lib_Db::get_users( 0, 5 );
 		$res            = $registration->register( $data );
-		$users          = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$users          = BWPN_Lib_Db::get_users( 0, 5 );
 
 		$expected = array(
 			'endpoint'   => 'http://my_endpoint',
@@ -88,9 +88,9 @@ class RestRegistrationTest extends WP_UnitTestCase {
 		$this->assertArraySubset( $expected, (array) $users[0] );
 
 		// clean up.
-		$webpush         = Perfecty_Push_External_Webpush::get();
-		$vapid_generator = array( 'Perfecty_Push_External_Webpush', 'createVapidKeys' );
-		Perfecty_Push_Lib_Push_Server::bootstrap( array(), $vapid_generator, $webpush );
+		$webpush         = BWPN_External_Webpush::get();
+		$vapid_generator = array( 'BWPN_External_Webpush', 'createVapidKeys' );
+		BWPN_Lib_Push_Server::bootstrap( array(), $vapid_generator, $webpush );
 
 	}
 
@@ -98,11 +98,11 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test the user registration
 	 */
 	public function test_registration_new_with_ip_address() {
-		$options                         = get_option( 'perfecty_push' );
+		$options                         = get_option( 'bwpn_settings' );
 		$options['segmentation_enabled'] = 1;
-		update_option( 'perfecty_push', $options );
+		update_option( 'bwpn_settings', $options );
 
-		$registration = new Perfecty_Push_Users();
+		$registration = new BWPN_Users();
 		$data         = array(
 			'user' => array(
 				'endpoint' => 'http://my_endpoint',
@@ -113,9 +113,9 @@ class RestRegistrationTest extends WP_UnitTestCase {
 			),
 		);
 
-		$previous_users = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$previous_users = BWPN_Lib_Db::get_users( 0, 5 );
 		$res            = $registration->register( $data );
-		$users          = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$users          = BWPN_Lib_Db::get_users( 0, 5 );
 
 		$expected = array(
 			'endpoint'   => 'http://my_endpoint',
@@ -140,7 +140,7 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test the user registration when the it's a WP User
 	 */
 	public function test_registration_new_logged_in_wp_user() {
-		$registration = new Perfecty_Push_Users();
+		$registration = new BWPN_Users();
 		$data         = array(
 			'user' => array(
 				'endpoint' => 'http://my_endpoint',
@@ -157,9 +157,9 @@ class RestRegistrationTest extends WP_UnitTestCase {
 		wp_set_current_user( $wp_user_id );
 		$_SERVER['HTTP_X_WP_NONCE'] = wp_create_nonce( 'wp_rest' );
 
-		$previous_users = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$previous_users = BWPN_Lib_Db::get_users( 0, 5 );
 		$res            = $registration->register( $data );
-		$users          = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$users          = BWPN_Lib_Db::get_users( 0, 5 );
 
 		$expected = array(
 			'endpoint'   => 'http://my_endpoint',
@@ -183,10 +183,10 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test the user registration with an existing user (key_auth, key_p256dh)
 	 */
 	public function test_registration_existing_user_keys() {
-		$id   = Perfecty_Push_Lib_Db::create_user( 'http://my_endpoint1', 'my_key_auth', 'my_p256dh_key', '192.168.0.1' );
-		$user = Perfecty_Push_Lib_Db::get_user( $id );
+		$id   = BWPN_Lib_Db::create_user( 'http://my_endpoint1', 'my_key_auth', 'my_p256dh_key', '192.168.0.1' );
+		$user = BWPN_Lib_Db::get_user( $id );
 
-		$registration = new Perfecty_Push_Users();
+		$registration = new BWPN_Users();
 		$data         = array(
 			'user'    => array(
 				'endpoint' => 'http://my_endpoint2',
@@ -198,9 +198,9 @@ class RestRegistrationTest extends WP_UnitTestCase {
 			'user_id' => $user->uuid,
 		);
 
-		$previous_users = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$previous_users = BWPN_Lib_Db::get_users( 0, 5 );
 		$res            = $registration->register( $data );
-		$users          = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$users          = BWPN_Lib_Db::get_users( 0, 5 );
 
 		$expected = array(
 			'uuid'       => $user->uuid,
@@ -226,10 +226,10 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test the user registration with an existing user (uuid)
 	 */
 	public function test_registration_existing_user_uuid() {
-		$id   = Perfecty_Push_Lib_Db::create_user( 'http://my_endpoint', 'my_key_auth', 'my_p256dh_key', '192.168.0.1' );
-		$user = Perfecty_Push_Lib_Db::get_user( $id );
+		$id   = BWPN_Lib_Db::create_user( 'http://my_endpoint', 'my_key_auth', 'my_p256dh_key', '192.168.0.1' );
+		$user = BWPN_Lib_Db::get_user( $id );
 
-		$registration = new Perfecty_Push_Users();
+		$registration = new BWPN_Users();
 		$data         = array(
 			'user'    => array(
 				'endpoint' => 'http://my_endpoint',
@@ -241,9 +241,9 @@ class RestRegistrationTest extends WP_UnitTestCase {
 			'user_id' => $user->uuid,
 		);
 
-		$previous_users = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$previous_users = BWPN_Lib_Db::get_users( 0, 5 );
 		$res            = $registration->register( $data );
-		$users          = Perfecty_Push_Lib_Db::get_users( 0, 5 );
+		$users          = BWPN_Lib_Db::get_users( 0, 5 );
 
 		$expected = array(
 			'endpoint'   => 'http://my_endpoint',
@@ -268,7 +268,7 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test registration invalid
 	 */
 	public function test_registration_invalid() {
-		$users = new Perfecty_Push_Users();
+		$users = new BWPN_Users();
 		$data  = array(
 			'user' => array(
 				'endpoint' => 'http://my_endpoint',
@@ -296,13 +296,13 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test the user registration
 	 */
 	public function test_registration_new_with_invalid_ip_address() {
-		$options                         = get_option( 'perfecty_push' );
+		$options                         = get_option( 'bwpn_settings' );
 		$options['segmentation_enabled'] = 1;
-		update_option( 'perfecty_push', $options );
+		update_option( 'bwpn_settings', $options );
 
 		$_SERVER['REMOTE_ADDR'] = '127.7.7.444';
 
-		$registration = new Perfecty_Push_Users();
+		$registration = new BWPN_Users();
 		$data         = array(
 			'user' => array(
 				'endpoint' => 'http://my_endpoint',
@@ -330,7 +330,7 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test registration missing important data
 	 */
 	public function test_registration_missing_data() {
-		$users = new Perfecty_Push_Users();
+		$users = new BWPN_Users();
 		$data  = array(
 			'user' => array(
 				'keys' => array(
@@ -356,7 +356,7 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test registration DB error
 	 */
 	public function test_registration_db_error() {
-		$users = new Perfecty_Push_Users();
+		$users = new BWPN_Users();
 		$data  = array(
 			'user' => array(
 				'endpoint' => 'http://my_endpoint',
@@ -384,9 +384,9 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 * Test registration with an existing user, DB error
 	 */
 	public function test_registration_existing_user_db_error() {
-		$id            = Perfecty_Push_Lib_Db::create_user( 'http://my_endpoint', 'my_key_auth', 'my_p256dh_key', '192.168.0.1' );
-		$user          = Perfecty_Push_Lib_Db::get_user( $id );
-		$registrations = new Perfecty_Push_Users();
+		$id            = BWPN_Lib_Db::create_user( 'http://my_endpoint', 'my_key_auth', 'my_p256dh_key', '192.168.0.1' );
+		$user          = BWPN_Lib_Db::get_user( $id );
+		$registrations = new BWPN_Users();
 		$data          = array(
 			'user'    => array(
 				'endpoint' => 'http://my_endpoint',
@@ -416,7 +416,7 @@ class RestRegistrationTest extends WP_UnitTestCase {
 	 */
 	public function test_registration_invalid_nonce() {
 		unset( $_SERVER['HTTP_X_WP_NONCE'] );
-		$mock = Mockery::mock( Perfecty_Push_Users::class )->makePartial();
+		$mock = Mockery::mock( BWPN_Users::class )->makePartial();
 		$mock
 		->shouldReceive( 'terminate' )
 		->andReturnUsing(
