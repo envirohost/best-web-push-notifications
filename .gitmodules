@@ -1,3 +1,0 @@
-[submodule "public/js/perfecty-push-sdk"]
-	path = public/js/perfecty-push-sdk
-	url = https://github.com/perfectyorg/perfecty-push-js-sdk.git
