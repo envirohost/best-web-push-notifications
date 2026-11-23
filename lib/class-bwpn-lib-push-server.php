@@ -1,412 +1,501 @@
 <?php
-
-use BWPN_Lib_Log as Log;
-
-/***
- * Best Web Push server.
+/**
+ * Push server: schedules jobs and delivers notifications in batches.
  *
- * Important: Before using any method you need to bootstrap the lib.
+ * @package BWPN
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Sends notifications.
+ *
+ * A broadcast is a row in the notifications table (a "job"). WP-Cron runs
+ * the job with execute_job(); each run takes the job lock atomically, sends
+ * as many batches as fit in the time budget, records progress per batch and
+ * schedules the next run. The watchdog re-queues jobs whose run never fired
+ * or whose worker died, so no job stays "running" forever.
+ *
+ * Fixes over upstream Perfecty Push 1.6.5:
+ * - A batch with zero successes no longer fails and stops the whole job.
+ * - A crashed worker no longer leaves the job locked forever (stale locks).
+ * - Subscribers are paged by id (keyset), not OFFSET, so none are skipped
+ *   or notified twice when rows are deleted during a send.
+ * - 401/403 responses never delete subscribers: they mean our VAPID keys or
+ *   subject were rejected, not that the subscription is gone. A job whose
+ *   batch is rejected entirely stops with a clear error instead of wiping
+ *   the subscriber list.
  */
 class BWPN_Lib_Push_Server {
 
-	public const DEFAULT_BATCH_SIZE             = 1500;
-	public const DEFAULT_PARALLEL_FLUSHING_SIZE = 50;
-	public const BROADCAST_HOOK                 = 'bwpn_broadcast_notification_event';
+	public const RESULT_OK      = 'ok';
+	public const RESULT_EXPIRED = 'expired';
+	public const RESULT_AUTH    = 'auth';
+	public const RESULT_RETRY   = 'retry';
+	public const RESULT_INVALID = 'invalid';
 
-	private static $auth;
-	private static $webpush;
-	private static $vapid_generator;
-	private static $max_time;
+	/** Seconds after which a job lock is considered abandoned. */
+	public const STALE_AFTER = 10 * MINUTE_IN_SECONDS;
+
+	/** Unexpected errors tolerated before a job is marked failed. */
+	public const MAX_ATTEMPTS = 3;
 
 	/**
-	 * Bootstraps the Push Server.
+	 * Sender override (tests, or a custom transport).
 	 *
-	 * @param $auth array Vapid Keys
-	 * @param $vapid_generator Callable Method that generates the vapid keys
-	 * @param $webpush object Web push server
-	 * @param $max_time int Max execution time in seconds, default: php_ini.max_execution_time
+	 * @var callable|null
 	 */
-	public static function bootstrap( $auth, $vapid_generator, $webpush = null, $max_time = null ) {
-		if ( ! is_callable( $vapid_generator ) ) {
-			Log::error( "$vapid_generator must be a callable function" );
-		}
+	private static $sender = null;
 
-		self::$auth            = $auth;
-		self::$vapid_generator = $vapid_generator;
-		self::$webpush         = $webpush;
-		self::$max_time        = $max_time == null ? (int) ini_get( 'max_execution_time' ) : $max_time;
+	/**
+	 * Replaces the sender. The callable receives (object[] $subscribers,
+	 * string $payload, array $options) and returns array<int, string> of
+	 * subscriber id => RESULT_* constant. Pass null to restore web-push.
+	 *
+	 * @param callable|null $sender Sender.
+	 */
+	public static function set_sender( $sender ) {
+		self::$sender = is_callable( $sender ) ? $sender : null;
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Scheduling
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Creates a broadcast job and schedules it.
+	 *
+	 * @param array<string, mixed> $payload   Payload from BWPN_Lib_Payload::build().
+	 * @param int|null             $timestamp When to send (UTC), null for now.
+	 * @param array<string, mixed> $args      source, post_id.
+	 * @return int|WP_Error Job id.
+	 */
+	public static function schedule_broadcast( array $payload, $timestamp = null, array $args = array() ) {
+		$json = BWPN_Lib_Payload::encode( $payload );
+		if ( is_wp_error( $json ) ) {
+			return $json;
+		}
+		if ( ! BWPN_Settings::has_keys() ) {
+			return new WP_Error( 'bwpn_no_keys', __( 'VAPID keys are missing. Generate them in Settings before sending.', 'best-web-push-notifications' ) );
+		}
+		$when = null === $timestamp ? time() : max( time(), (int) $timestamp );
+		$id   = BWPN_Lib_Db::create_notification(
+			$json,
+			array(
+				'total'        => BWPN_Lib_Db::count_subscribers(),
+				'batch_size'   => max( 1, BWPN_Settings::int( 'batch_size' ) ),
+				'scheduled_at' => $when,
+				'source'       => (string) ( $args['source'] ?? 'manual' ),
+				'post_id'      => (int) ( $args['post_id'] ?? 0 ),
+			)
+		);
+		if ( false === $id ) {
+			return new WP_Error( 'bwpn_job_not_created', __( 'The notification could not be saved.', 'best-web-push-notifications' ) );
+		}
+		BWPN_Cron::schedule_job( $id, $when );
+		BWPN_Lib_Log::info( "Job $id scheduled for " . BWPN_Lib_Db::now( $when ) . ' UTC' );
+
+		/**
+		 * Fires after a broadcast job is created.
+		 *
+		 * @param int $id Job id.
+		 */
+		do_action( 'bwpn_job_scheduled', $id );
+		return $id;
 	}
 
 	/**
-	 * Get the Push Server instance
+	 * Cancels a job that has not finished.
 	 *
-	 * @return object Web push server
-	 * @throws Throwable Bubbles the internal exceptions.
+	 * @param int $id Job id.
+	 * @return bool
 	 */
-	public static function get_push_server() {
-		if ( ! self::$auth ) {
-			Log::error( 'The VAPID auth keys were not found' );
-			return null;
+	public static function cancel_job( $id ) {
+		$job = BWPN_Lib_Db::get_notification( $id );
+		if ( ! $job || ! in_array( $job->status, array( BWPN_Lib_Db::STATUS_SCHEDULED, BWPN_Lib_Db::STATUS_RUNNING ), true ) ) {
+			return false;
+		}
+		BWPN_Cron::unschedule_job( $id );
+		return BWPN_Lib_Db::set_status( $id, BWPN_Lib_Db::STATUS_CANCELED );
+	}
+
+	/**
+	 * Re-queues a failed or canceled job from where it stopped.
+	 *
+	 * @param int $id Job id.
+	 * @return bool
+	 */
+	public static function resume_job( $id ) {
+		$job = BWPN_Lib_Db::get_notification( $id );
+		if ( ! $job || ! in_array( $job->status, array( BWPN_Lib_Db::STATUS_FAILED, BWPN_Lib_Db::STATUS_CANCELED ), true ) ) {
+			return false;
+		}
+		BWPN_Lib_Db::update_notification(
+			$id,
+			array(
+				'status'      => BWPN_Lib_Db::STATUS_RUNNING,
+				'is_taken'    => 0,
+				'taken_at'    => null,
+				'attempts'    => 0,
+				'finished_at' => null,
+				'last_error'  => '',
+			)
+		);
+		return BWPN_Cron::schedule_job( $id, time() );
+	}
+
+	/**
+	 * Watchdog: nudges jobs that are due, paused, or abandoned.
+	 *
+	 * @return int[] Re-queued job ids.
+	 */
+	public static function watchdog() {
+		$ids = BWPN_Lib_Db::get_jobs_to_resume( self::STALE_AFTER );
+		foreach ( $ids as $id ) {
+			BWPN_Cron::schedule_job( $id, time() );
+		}
+		if ( ! empty( $ids ) ) {
+			BWPN_Lib_Log::info( 'Watchdog re-queued jobs: ' . implode( ',', $ids ) );
+		}
+		return $ids;
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Execution
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Runs a job for up to the time budget. Hooked to the cron event.
+	 *
+	 * @param int      $id     Job id.
+	 * @param int|null $budget Seconds available; defaults to time_budget().
+	 * @return string Job status after the run, or '' when the job was not run.
+	 */
+	public static function execute_job( $id, $budget = null ) {
+		$id  = (int) $id;
+		$job = BWPN_Lib_Db::get_notification( $id );
+		if ( ! $job ) {
+			return '';
+		}
+		if ( BWPN_Lib_Db::STATUS_SCHEDULED === $job->status && strtotime( $job->scheduled_at . ' UTC' ) > time() + 5 ) {
+			// Fired early (e.g. rescheduled); the real event or the watchdog runs it.
+			BWPN_Cron::schedule_job( $id, strtotime( $job->scheduled_at . ' UTC' ) );
+			return '';
+		}
+		if ( ! BWPN_Lib_Db::claim_notification( $id, self::STALE_AFTER ) ) {
+			BWPN_Lib_Log::debug( "Job $id is taken by another worker or not runnable" );
+			return '';
 		}
 
-		$options                = get_option( 'bwpn_settings' );
-		$parallel_flushing_size = isset( $options['parallel_flushing_size'] ) ? (int) esc_attr( $options['parallel_flushing_size'] ) : self::DEFAULT_PARALLEL_FLUSHING_SIZE;
+		$start  = microtime( true );
+		$budget = null === $budget ? self::time_budget() : max( 1, (int) $budget );
 
-		set_error_handler(
-			function ( $errno, $errstr, $errfile, $errline ) {
-				if ( strpos( $errstr, 'gmp extension is not loaded' ) !== false ) {
-					// we know this, however we capture the E_WARNING because we have previously
-					// informed the user about this in a nicer way.
-					return true;
+		if ( BWPN_Lib_Db::STATUS_SCHEDULED === $job->status ) {
+			BWPN_Lib_Db::update_notification(
+				$id,
+				array(
+					'status' => BWPN_Lib_Db::STATUS_RUNNING,
+					'total'  => BWPN_Lib_Db::count_subscribers(),
+				)
+			);
+		}
+
+		try {
+			$cursor     = (int) $job->last_cursor;
+			$batch_size = max( 1, (int) $job->batch_size );
+			$options    = self::send_options();
+			$sender     = self::sender();
+
+			while ( true ) {
+				$subscribers = BWPN_Lib_Db::get_subscribers_after( $cursor, $batch_size );
+				if ( empty( $subscribers ) ) {
+					return self::finish( $id );
 				}
 
-				Log::error( 'Could not get the Push Server: ' . $errno . ' ' . $errstr . ' ' . $errfile . ' ' . $errline );
-				return false; // we raise it to the next handler otherwise
-			}
-		);
-		try {
-			$webpush = BWPN_External_Webpush::get( self::$auth, array( 'batchSize' => $parallel_flushing_size ) );
-			$webpush->setReuseVAPIDHeaders( true );
-		} catch ( Throwable $ex ) {
-			Log::error( 'Could not start the Push Server: ' . $ex->getMessage() . ', ' . $ex->getTraceAsString() );
-			BWPN_Lib_Utils::show_message( esc_html( 'Could not start the Push Server, check the PHP error logs for more information.', 'best-web-push-notifications' ), 'warning' );
-			BWPN_Lib_Utils::disable();
-			throw $ex;
-		}
-		restore_error_handler();
+				$results = (array) call_user_func( $sender, $subscribers, (string) $job->payload, $options );
+				$summary = self::apply_results( $subscribers, $results );
+				$cursor  = (int) end( $subscribers )->id;
+				BWPN_Lib_Db::add_progress( $id, $cursor, $summary['ok'], $summary['failed'], $summary['expired'] );
 
-		return $webpush;
-	}
+				if ( $summary['auth'] > 0 && $summary['auth'] === count( $subscribers ) ) {
+					// Every push service rejected our credentials: stop, keep the subscribers.
+					$message = 'Push services rejected the VAPID credentials (401/403). Check the VAPID keys and subject; no subscribers were removed.';
+					BWPN_Lib_Log::error( "Job $id: $message" );
+					BWPN_Lib_Db::set_status( $id, BWPN_Lib_Db::STATUS_FAILED, $message );
+					return BWPN_Lib_Db::STATUS_FAILED;
+				}
 
-	/**
-	 * Creates the VAPI keys
-	 *
-	 * @return array an array with the VAPID keys
-	 */
-	public static function create_vapid_keys() {
-		$vapid_keys = call_user_func( self::$vapid_generator );
-		Log::info( 'VAPID Keys were created' );
-
-		return $vapid_keys;
-	}
-
-	/**
-	 * Schedules an async notification to all the users
-	 *
-	 * @param $payload array Payload to be sent, array
-	 * @param $scheduled_time int|string a unix timestamp, or a string representing a date
-	 * @return int | bool $notification_id if success, false otherwise
-	 * @throws Exception
-	 */
-	public static function schedule_broadcast_async( $payload, $scheduled_time = null ) {
-		Log::info( 'Scheduling a broadcast notification' );
-		Log::debug( print_r( $payload, true ) );
-
-		// required because is_plugin_active is needed when saving a post
-		// and 'admin_init' hasn't been fired yet
-		require_once ABSPATH . '/wp-admin/includes/plugin.php';
-
-		if ( ! is_array( $payload ) ) {
-			$error = 'Payload should be an array';
-			Log::error( $error );
-			throw new Exception( $error );
-		}
-		$payload = apply_filters( 'bwpn_custom_payload', $payload );
-		$payload = json_encode( $payload );
-
-		if ( BWPN_Lib_Utils::is_disabled() ) {
-			Log::error( 'Best Web Push is disabled, fix the issues already reported.' );
-			return false;
-		}
-
-		$options              = get_option( 'bwpn_settings' );
-		$use_action_scheduler = isset( $options['use_action_scheduler'] ) ? esc_attr( $options['use_action_scheduler'] ) : false;
-		$batch_size           = isset( $options['batch_size'] ) ? (int) esc_attr( $options['batch_size'] ) : self::DEFAULT_BATCH_SIZE;
-
-		if ( is_plugin_active( 'action-scheduler' ) || $use_action_scheduler ) {
-			// Execute using action scheduler: https://actionscheduler.org/usage/
-			Log::error( 'Action scheduler not implemented' );
-			return false;
-		} else {
-			// Fallback to wp-cron
-			if ( is_null( $scheduled_time ) ) {
-				$scheduled_time = time();
-			}
-			if ( is_string( $scheduled_time ) ) {
-				$date           = new DateTime( $scheduled_time );
-				$scheduled_time = $date->getTimestamp();
-			}
-			$total_users     = BWPN_Lib_Db::get_total_users();
-			$notification_id = BWPN_Lib_Db::create_notification( $payload, BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED, $total_users, $batch_size, $scheduled_time );
-			if ( ! $notification_id ) {
-				Log::error( 'Could not schedule the notification.' );
-				return false;
-			}
-			self::schedule_job( $notification_id, $scheduled_time );
-			do_action( 'bwpn_broadcast_scheduled', $payload );
-
-			return $notification_id;
-		}
-	}
-
-	/**
-	 * Schedule a notification to be executed by the cron job
-	 *
-	 * @param $notification_id
-	 * @param $scheduled_time
-	 *
-	 * @since v1.4.1
-	 */
-	public static function schedule_job( $notification_id, $scheduled_time ) {
-		$result = wp_schedule_single_event( $scheduled_time, self::BROADCAST_HOOK, array( $notification_id ) );
-		Log::info( 'Scheduling job id=' . $notification_id . ', result: ' . $result );
-		return $result;
-	}
-
-	/**
-	 * Un-schedule a notification from the cron job
-	 *
-	 * @param $notification_id
-	 * @param $scheduled_time
-	 *
-	 * @since v1.4.1
-	 */
-	public static function unschedule_job( $notification_id, $scheduled_time ) {
-		$result = wp_unschedule_event( $scheduled_time, self::BROADCAST_HOOK, array( $notification_id ) );
-		Log::info( 'Un-scheduling job id=' . $notification_id . ', result: ' . $result );
-		return $result;
-	}
-
-	/**
-	 * Send the notification to a WordPress user
-	 *
-	 * @param $wp_user_id int WordPress User Id
-	 * @param $payload array|string Payload to be sent, json encoded or array
-	 * @return array Array with [succeeded, failed]
-	 * @throws Exception
-	 */
-	public static function notify( $wp_user_id, $payload ) {
-		if ( ! is_array( $payload ) ) {
-			$error = 'Payload should be an array';
-			Log::error( $error );
-			throw new Exception( $error );
-		}
-		$payload = apply_filters( 'bwpn_custom_payload', $payload );
-		$payload = json_encode( $payload );
-
-		$users = BWPN_Lib_Db::get_users_by_wp_user_id( $wp_user_id );
-
-		$result = self::send_notification( $payload, $users );
-
-		do_action( 'bwpn_wp_user_notified', $payload, $wp_user_id );
-
-		return $result;
-	}
-
-	/**
-	 * Schedule a broadcast notification job for all the users
-	 *
-	 * @param $payload array|string Payload to be sent, json encoded or array
-	 * @return int $notification_id if success, false otherwise
-	 * @throws Exception
-	 */
-	public static function broadcast( $payload ) {
-		return self::schedule_broadcast_async( $payload );
-	}
-
-	/**
-	 * Get the job notifications that are stalled and
-	 * schedule the execution automatically
-	 */
-	public static function unleash_stalled() {
-		$running = BWPN_Lib_Db::get_notifications_stalled();
-		foreach ( $running as $item ) {
-			if ( ! wp_next_scheduled( self::BROADCAST_HOOK, array( $item->id ) ) ) {
-				self::schedule_job( $item->id, time() );
-				Log::info( 'An stalled notification job was unleashed, id = ' . $item->id );
-			}
-		}
-	}
-
-	/**
-	 * Returns true if the time has exceeded 80% of the maximum execution time
-	 *
-	 * @param $start_time float Start time in seconds (float)
-	 *
-	 * @return bool
-	 * @since 1.4.0
-	 */
-	public static function time_limit_exceeded( $start_time ) {
-		$elapsed_time = microtime( true ) - $start_time;
-		if ( self::$max_time != 0 && ( $elapsed_time * 100 / self::$max_time ) > 80 ) {
-			return true;
-		} else {
-			return false;
-		}
-	}
-
-	/**
-	 * Execute one broadcast batch
-	 *
-	 * @param int $notification_id Notification id
-	 *
-	 * @return bool Succeeded or failed
-	 */
-	public static function execute_broadcast_batch( $notification_id ) {
-		Log::info( 'Executing batch for job id=' . $notification_id );
-
-		$notification = BWPN_Lib_Db::get_notification( $notification_id );
-		if ( ! $notification ) {
-			Log::error( "Notification job $notification_id was not found" );
-			return false;
-		}
-
-		// if it has been taken but not released, that means a wrong state
-		if ( $notification->is_taken ) {
-			Log::error( 'Halted, notification job already taken, notification_id: ' . $notification_id );
-			return false;
-		}
-
-		// we check if it's a valid status
-		// we only process running or scheduled jobs
-		if ( $notification->status !== BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED &&
-		$notification->status !== BWPN_Lib_Db::NOTIFICATIONS_STATUS_RUNNING ) {
-			Log::error( 'Halted, received a job with an invalid status (' . $notification->status . '), notification_id: ' . $notification_id );
-			return false;
-		}
-
-		// this is the first time we get here so we mark it as running
-		if ( $notification->status == BWPN_Lib_Db::NOTIFICATIONS_STATUS_SCHEDULED ) {
-			Log::info( 'Marking job id=' . $notification_id . ' as running' );
-			BWPN_Lib_Db::mark_notification_running( $notification_id );
-		}
-
-		BWPN_Lib_Db::take_notification( $notification_id );
-
-		// we get the next batch, starting from $last_cursor we take $batch_size elements
-		// we only fetch the active users (only_active)
-		$total_succeeded = 0;
-		$total_failed    = 0;
-		$cursor          = $notification->last_cursor;
-		$start_time      = microtime( true );
-		while ( true ) {
-			$users  = BWPN_Lib_Db::get_users( $cursor, $notification->batch_size );
-			$count  = count( $users );
-			$cursor = $cursor + $count;
-
-			if ( $count == 0 ) {
-				Log::info( 'Job id=' . $notification_id . ' completed, released' );
-				$result = BWPN_Lib_Db::mark_notification_completed_untake( $notification_id );
-				if ( ! $result ) {
-					Log::error( "Could not mark the notification job $notification_id as completed" );
+				// Leave room for one more batch, judged by how long this one took.
+				$elapsed = microtime( true ) - $start;
+				if ( $elapsed * 1.5 >= $budget ) {
 					break;
 				}
-				break;
 			}
-
-			$result    = self::send_notification( $notification->payload, $users );
-			$succeeded = $result[0];
-			$failed    = $result[1];
-			if ( $succeeded !== 0 ) {
-				Log::info( "Completed batch, successful: $succeeded, failed: $failed, cursor: $cursor" );
-				$total_succeeded += $succeeded;
-				$total_failed    += $failed;
-			} else {
-				Log::error( 'Error executing one batch for id=' . $notification_id );
-				BWPN_Lib_Db::mark_notification_failed( $notification_id );
-				BWPN_Lib_Db::untake_notification( $notification_id );
-				break;
-			}
-
-			// check that we don't exceed 80% of max_execution_time
-			// in case we do, we split the execution to a next cron cycle to avoid the termination of the script
-			// if max_execution_time=0, we never split
-			if ( self::time_limit_exceeded( $start_time ) ) {
-				Log::warning( 'Time execution is reaching 80% of max_execution_time, moving to next cycle' );
-				break;
-			}
+		} catch ( Throwable $e ) {
+			return self::handle_error( $id, $e );
 		}
 
-		if ( $total_succeeded != 0 ) {
-			$notification                    = BWPN_Lib_Db::get_notification( $notification_id );
-			$notification->last_cursor       = $cursor;
-			$notification->succeeded        += $total_succeeded;
-			$notification->failed           += $total_failed;
-			$notification->is_taken          = 0;
-			$notification->last_execution_at = current_time( 'mysql', 1 );
-			$result                          = BWPN_Lib_Db::update_notification( $notification );
-
-			Log::info( 'Notification cycle for id=' . $notification_id . ' sent. Cursor: ' . $notification->last_cursor . ', Succeeded: ' . $total_succeeded . ', Failed: ' . $total_failed );
-			if ( ! $result ) {
-				Log::error( 'Could not update the notification after sending one batch' );
-				return false;
-			}
-
-			if ( $notification->status === BWPN_Lib_Db::NOTIFICATIONS_STATUS_RUNNING ) {
-				// execute the next batch
-				if ( ! wp_next_scheduled( self::BROADCAST_HOOK, array( $notification_id ) ) ) {
-					$result = wp_schedule_single_event( time(), self::BROADCAST_HOOK, array( $notification_id ) );
-					Log::info( 'Scheduling next batch for id=' . $notification_id . ' . Result: ' . $result );
-				} else {
-					Log::warning( "Don't schedule next batch, it's already scheduled, id=" . $notification_id );
-				}
-			}
-		}
-
-		return true;
+		// Out of time: release and continue in a fresh request.
+		BWPN_Lib_Db::release_notification( $id );
+		BWPN_Cron::schedule_job( $id, time() );
+		return BWPN_Lib_Db::STATUS_RUNNING;
 	}
 
 	/**
-	 * Send the notification to a set of users
+	 * Marks a job completed.
 	 *
-	 * @param $payload array|string Payload to be sent, json encoded or array
-	 * @param $users array List of users
-	 * @return array Total (succeeded, failed) notifications sent
-	 * @throws ErrorException
+	 * @param int $id Job id.
+	 * @return string
 	 */
-	public static function send_notification( $payload, $users ) {
-		Log::info( 'Sending notification to ' . count( $users ) . ' users' );
-		Log::debug( print_r( $payload, true ) );
-
-		if ( ! self::$webpush ) {
-			self::$webpush = self::get_push_server();
+	private static function finish( $id ) {
+		$job   = BWPN_Lib_Db::get_notification( $id );
+		$error = '';
+		if ( $job && 0 === (int) $job->succeeded && (int) $job->failed > 0 ) {
+			$error = 'No notification was delivered; see the logs for the push service responses.';
 		}
+		BWPN_Lib_Db::set_status( $id, BWPN_Lib_Db::STATUS_COMPLETED, $error );
+		BWPN_Lib_Log::info( "Job $id completed" );
 
-		foreach ( $users as $item ) {
-			Log::debug( 'Enqueuing notification to user id=' . $item->id );
-			$push_user = BWPN_External_Webpush::subscription(
-				$item->endpoint,
-				$item->key_p256dh,
-				$item->key_auth
-			);
+		/**
+		 * Fires when a job finishes sending.
+		 *
+		 * @param int $id Job id.
+		 */
+		do_action( 'bwpn_job_completed', $id );
+		return BWPN_Lib_Db::STATUS_COMPLETED;
+	}
 
-			self::$webpush->queueNotification( $push_user, $payload );
+	/**
+	 * Handles an unexpected error: retry later, or fail after MAX_ATTEMPTS.
+	 *
+	 * @param int       $id Job id.
+	 * @param Throwable $e  Error.
+	 * @return string
+	 */
+	private static function handle_error( $id, Throwable $e ) {
+		$job      = BWPN_Lib_Db::get_notification( $id );
+		$attempts = $job ? (int) $job->attempts + 1 : self::MAX_ATTEMPTS;
+		$message  = get_class( $e ) . ': ' . $e->getMessage();
+		BWPN_Lib_Log::error( "Job $id attempt $attempts: $message" );
+		BWPN_Lib_Db::update_notification(
+			$id,
+			array(
+				'attempts'   => $attempts,
+				'last_error' => substr( $message, 0, 255 ),
+			)
+		);
+		if ( $attempts >= self::MAX_ATTEMPTS ) {
+			BWPN_Lib_Db::set_status( $id, BWPN_Lib_Db::STATUS_FAILED, $message );
+			return BWPN_Lib_Db::STATUS_FAILED;
 		}
+		BWPN_Lib_Db::release_notification( $id );
+		BWPN_Cron::schedule_job( $id, time() + MINUTE_IN_SECONDS * $attempts );
+		return BWPN_Lib_Db::STATUS_RUNNING;
+	}
 
-		$succeeded = 0;
-		$failed    = 0;
-		foreach ( self::$webpush->flush() as $report ) {
-			if ( $report->isSuccess() ) {
-				Log::debug( 'Notification sent successfully' );
-				$succeeded++;
+	/**
+	 * Updates subscribers from the results of one batch.
+	 *
+	 * @param object[]              $subscribers Batch.
+	 * @param array<int|string, string> $results Subscriber id => result.
+	 * @return array{ok: int, failed: int, expired: int, auth: int}
+	 */
+	public static function apply_results( array $subscribers, array $results ) {
+		$buckets = array(
+			self::RESULT_OK      => array(),
+			self::RESULT_EXPIRED => array(),
+			self::RESULT_AUTH    => array(),
+			'failure'            => array(),
+		);
+		foreach ( $subscribers as $subscriber ) {
+			$sid    = (int) $subscriber->id;
+			$result = $results[ $sid ] ?? self::RESULT_RETRY;
+			if ( isset( $buckets[ $result ] ) ) {
+				$buckets[ $result ][] = $sid;
 			} else {
-				Log::error( 'Failed to send one notification, error: ' . $report->getReason() );
-				$failed++;
-
-				$endpoint = $report->getEndpoint();
-				if ( $report->isSubscriptionExpired() ) {
-					Log::error( "User subscription has expired, removing it: $endpoint" );
-					BWPN_Lib_Db::delete_user_by_endpoint( $endpoint );
-					continue;
-				}
-				$response = $report->getResponse();
-				if ( $response != null && $response->getStatusCode() == 403 ) {
-					Log::error( "The endpoint should not be tried again, removing it: $endpoint" );
-					BWPN_Lib_Db::delete_user_by_endpoint( $endpoint );
-					continue;
-				}
+				$buckets['failure'][] = $sid;
 			}
 		}
-		return array( $succeeded, $failed );
+		BWPN_Lib_Db::record_success( $buckets[ self::RESULT_OK ] );
+		BWPN_Lib_Db::delete_subscribers( $buckets[ self::RESULT_EXPIRED ] );
+		// Credential errors do not count against subscribers.
+		BWPN_Lib_Db::record_failure( $buckets['failure'] );
+
+		return array(
+			'ok'      => count( $buckets[ self::RESULT_OK ] ),
+			'failed'  => count( $buckets['failure'] ) + count( $buckets[ self::RESULT_AUTH ] ),
+			'expired' => count( $buckets[ self::RESULT_EXPIRED ] ),
+			'auth'    => count( $buckets[ self::RESULT_AUTH ] ),
+		);
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Direct sends (welcome message, single user, test)
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * Sends a payload immediately to the given subscribers (small sets only).
+	 *
+	 * @param object[]             $subscribers Rows with id, endpoint, key_p256dh, key_auth, content_encoding.
+	 * @param array<string, mixed> $payload     Payload array.
+	 * @return array{ok: int, failed: int, expired: int, auth: int}|WP_Error
+	 */
+	public static function send_now( array $subscribers, array $payload ) {
+		$json = BWPN_Lib_Payload::encode( $payload );
+		if ( is_wp_error( $json ) ) {
+			return $json;
+		}
+		if ( empty( $subscribers ) ) {
+			return array(
+				'ok'      => 0,
+				'failed'  => 0,
+				'expired' => 0,
+				'auth'    => 0,
+			);
+		}
+		try {
+			$results = (array) call_user_func( self::sender(), $subscribers, $json, self::send_options() );
+		} catch ( Throwable $e ) {
+			BWPN_Lib_Log::error( 'Direct send failed: ' . $e->getMessage() );
+			return new WP_Error( 'bwpn_send_failed', $e->getMessage() );
+		}
+		return self::apply_results( $subscribers, $results );
+	}
+
+	/**
+	 * Sends a payload to every subscription of a WordPress user.
+	 *
+	 * @param int                  $wp_user_id User id.
+	 * @param array<string, mixed> $payload    Payload.
+	 * @return array{ok: int, failed: int, expired: int, auth: int}|WP_Error
+	 */
+	public static function notify_user( $wp_user_id, array $payload ) {
+		return self::send_now( BWPN_Lib_Db::get_subscribers_by_wp_user( (int) $wp_user_id ), $payload );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Web Push transport
+	 * ------------------------------------------------------------------- */
+
+	/**
+	 * The active sender.
+	 *
+	 * @return callable
+	 */
+	private static function sender() {
+		if ( null !== self::$sender ) {
+			return self::$sender;
+		}
+		/**
+		 * Filters the sender used to deliver batches.
+		 *
+		 * @param callable $sender Default web-push sender.
+		 */
+		$sender = apply_filters( 'bwpn_sender', array( __CLASS__, 'webpush_send' ) );
+		return is_callable( $sender ) ? $sender : array( __CLASS__, 'webpush_send' );
+	}
+
+	/**
+	 * Per-message options.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private static function send_options() {
+		return array(
+			'TTL'     => max( 0, BWPN_Settings::int( 'ttl' ) ),
+			'urgency' => 'normal',
+		);
+	}
+
+	/**
+	 * Default sender: encrypts and posts through minishlink/web-push.
+	 *
+	 * @param object[]             $subscribers Batch.
+	 * @param string               $payload     JSON payload.
+	 * @param array<string, mixed> $options     TTL, urgency.
+	 * @return array<int, string> Subscriber id => result.
+	 * @throws RuntimeException When the keys are missing.
+	 */
+	public static function webpush_send( array $subscribers, $payload, array $options ) {
+		if ( ! BWPN_Settings::has_keys() ) {
+			throw new RuntimeException( 'VAPID keys are missing' );
+		}
+		$webpush = BWPN_External_Webpush::create(
+			array(
+				'subject'    => BWPN_Settings::vapid_subject(),
+				'publicKey'  => BWPN_Settings::public_key(),
+				'privateKey' => BWPN_Settings::private_key(),
+			),
+			$options
+		);
+
+		$by_endpoint = array();
+		$results     = array();
+		foreach ( $subscribers as $subscriber ) {
+			try {
+				$webpush->queueNotification(
+					BWPN_External_Webpush::subscription( $subscriber->endpoint, $subscriber->key_p256dh, $subscriber->key_auth, $subscriber->content_encoding ),
+					$payload
+				);
+				$by_endpoint[ $subscriber->endpoint ][] = (int) $subscriber->id;
+			} catch ( Throwable $e ) {
+				BWPN_Lib_Log::warning( "Subscriber {$subscriber->id} could not be queued: " . $e->getMessage() );
+				$results[ (int) $subscriber->id ] = self::RESULT_INVALID;
+			}
+		}
+
+		foreach ( $webpush->flush( count( $subscribers ) ) as $report ) {
+			$result = self::classify( $report->isSuccess(), $report->getResponse() ? $report->getResponse()->getStatusCode() : 0 );
+			if ( self::RESULT_OK !== $result ) {
+				BWPN_Lib_Log::debug( 'Push to ' . BWPN_Subscription_Validator::service_label( $report->getEndpoint() ) . " failed ($result): " . $report->getReason() );
+			}
+			foreach ( $by_endpoint[ $report->getEndpoint() ] ?? array() as $sid ) {
+				$results[ $sid ] = $result;
+			}
+		}
+		return $results;
+	}
+
+	/**
+	 * Maps a push service response to a result.
+	 *
+	 * @param bool $success Library success flag.
+	 * @param int  $status  HTTP status, 0 for network errors.
+	 * @return string
+	 */
+	public static function classify( $success, $status ) {
+		if ( $success ) {
+			return self::RESULT_OK;
+		}
+		if ( 404 === $status || 410 === $status ) {
+			return self::RESULT_EXPIRED;
+		}
+		if ( 401 === $status || 403 === $status ) {
+			return self::RESULT_AUTH;
+		}
+		if ( 400 === $status || 413 === $status ) {
+			return self::RESULT_INVALID;
+		}
+		return self::RESULT_RETRY;
+	}
+
+	/**
+	 * Seconds a single run may spend sending.
+	 *
+	 * @return int
+	 */
+	public static function time_budget() {
+		$max = (int) ini_get( 'max_execution_time' );
+		if ( $max <= 0 || $max > 60 ) {
+			$max = 60;
+		}
+		/**
+		 * Filters the time budget of one job run, in seconds.
+		 *
+		 * @param int $budget Seconds.
+		 */
+		return max( 5, (int) apply_filters( 'bwpn_time_budget', (int) floor( $max * 0.6 ) ) );
 	}
 }

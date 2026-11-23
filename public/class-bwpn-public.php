@@ -1,124 +1,105 @@
 <?php
-
 /**
- * The public-facing functionality of the plugin.
+ * Front-end: SDK, styles and its configuration.
  *
- * @link       https://github.com/rwngallego
- * @since      1.0.0
- *
- * @package    BWPN
- * @subpackage BWPN/public
+ * @package BWPN
  */
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
- * The public-facing functionality of the plugin.
- *
- * Defines the plugin name, version, and two examples hooks for how to
- * enqueue the public-facing stylesheet and JavaScript.
- *
- * @package    BWPN
- * @subpackage BWPN/public
- * @author     Rowinson Gallego <rwn.gallego@gmail.com>
+ * Loads the browser SDK on the front end.
  */
 class BWPN_Public {
 
-	/**
-	 * The ID of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $plugin_name    The ID of this plugin.
-	 */
-	private $plugin_name;
+	public const HANDLE = 'best-web-push-notifications';
 
 	/**
-	 * The version of this plugin.
-	 *
-	 * @since    1.0.0
-	 * @access   private
-	 * @var      string    $version    The current version of this plugin.
+	 * Registers hooks.
 	 */
-	private $version;
-
-	/**
-	 * Initialize the class and set its properties.
-	 *
-	 * @since    1.0.0
-	 * @param      string $plugin_name       The name of the plugin.
-	 * @param      string $version    The version of this plugin.
-	 */
-	public function __construct( $plugin_name, $version ) {
-		$this->plugin_name = $plugin_name;
-		$this->version     = $version;
+	public function register_hooks() {
+		BWPN_Subscribers_Rest::register_hooks();
+		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue' ) );
 	}
 
 	/**
-	 * Register the stylesheets for the public-facing side of the site.
+	 * Whether the SDK should load on this page.
 	 *
-	 * @since    1.0.0
+	 * @return bool
 	 */
-	public function enqueue_styles() {
-		wp_enqueue_style( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'css/bwpn-public.css', array(), $this->version, 'all' );
+	public static function should_load() {
+		$load = BWPN_Settings::bool( 'widget_enabled' ) && BWPN_Settings::has_keys() && ! BWPN_Lib_Utils::is_disabled();
+		/**
+		 * Filters whether the subscription SDK loads on the current page.
+		 *
+		 * @param bool $load Load.
+		 */
+		return (bool) apply_filters( 'bwpn_load_sdk', $load );
 	}
 
 	/**
-	 * Register the JavaScript for the public-facing side of the site.
+	 * SDK configuration. Contains no nonce: the subscription routes do not
+	 * need one, so page caches can safely store it.
 	 *
-	 * @since    1.0.0
+	 * @return array<string, mixed>
 	 */
-	public function enqueue_scripts() {
-		wp_enqueue_script( $this->plugin_name, plugin_dir_url( __FILE__ ) . 'js/bwpn-sdk/dist/bwpn-sdk.min.js', array(), $this->version, true );
+	public static function config() {
+		$icon_id = BWPN_Settings::int( 'default_icon' );
+		$server  = trim( BWPN_Settings::str( 'server_url' ) );
+		$config  = array(
+			'serverUrl'              => '' !== $server ? untrailingslashit( esc_url_raw( $server ) ) : untrailingslashit( rest_url( BWPN_Subscribers_Rest::NAMESPACE ) ),
+			'vapidPublicKey'         => BWPN_Settings::public_key(),
+			'serviceWorkerUrl'       => BWPN_Service_Worker::worker_url(),
+			'serviceWorkerScope'     => BWPN_Settings::scope(),
+			'dialogTitle'            => BWPN_Settings::text( 'dialog_title' ),
+			'dialogSubmit'           => BWPN_Settings::text( 'dialog_submit' ),
+			'dialogCancel'           => BWPN_Settings::text( 'dialog_cancel' ),
+			'settingsTitle'          => BWPN_Settings::text( 'settings_title' ),
+			'settingsOptIn'          => BWPN_Settings::text( 'settings_opt_in' ),
+			'settingsUpdateError'    => BWPN_Settings::text( 'settings_update_error' ),
+			'promptIconUrl'          => $icon_id ? (string) wp_get_attachment_image_url( $icon_id, 'thumbnail' ) : '',
+			'promptVisits'           => max( 1, BWPN_Settings::int( 'prompt_visits' ) ),
+			'promptDelay'            => max( 0, BWPN_Settings::int( 'prompt_delay' ) ),
+			'promptScroll'           => min( 100, max( 0, BWPN_Settings::int( 'prompt_scroll' ) ) ),
+			'hideBellAfterSubscribe' => BWPN_Settings::bool( 'hide_bell_after_subscribe' ),
+			'iosHint'                => BWPN_Settings::bool( 'ios_hint_enabled' ) ? BWPN_Settings::text( 'ios_hint_text' ) : '',
+			'adoptLegacy'            => true,
+			'loggerLevel'            => BWPN_Settings::bool( 'client_debug' ) ? 'debug' : 'error',
+		);
+		/**
+		 * Filters the SDK configuration printed on the page.
+		 *
+		 * @param array<string, mixed> $config Config.
+		 */
+		return (array) apply_filters( 'bwpn_sdk_config', $config );
 	}
 
 	/**
-	 * Prints the header content
-	 *
-	 * @since    1.0.0
+	 * Enqueues the SDK.
 	 */
-	public function print_head() {
-		$options = get_option( 'bwpn_settings' );
-
-		BWPN_Lib_Push_Server::unleash_stalled();
-		require_once plugin_dir_path( __FILE__ ) . 'partials/bwpn-public-head.php';
-	}
-
-	/**
-	 * Register the REST endpoints
-	 *
-	 * @since 1.0.0
-	 */
-	public function register_rest_endpoints() {
-		$users = new BWPN_Users();
-
-		// JS SDK friendly routes
-		register_rest_route(
-			'bwpn',
-			'/v1/push/users',
+	public function enqueue() {
+		if ( ! self::should_load() ) {
+			return;
+		}
+		$file = BWPN_PATH . 'public/js/bwpn-sdk.min.js';
+		$ver  = BWPN_VERSION . ( is_readable( $file ) ? '.' . filemtime( $file ) : '' );
+		wp_enqueue_style( self::HANDLE, BWPN_URL . 'public/css/bwpn-public.css', array(), BWPN_VERSION );
+		wp_enqueue_script(
+			self::HANDLE,
+			BWPN_URL . 'public/js/bwpn-sdk.min.js',
+			array(),
+			$ver,
 			array(
-				'methods'             => array( 'POST' ),
-				'callback'            => array( $users, 'register' ),
-				'permission_callback' => '__return_true',
+				'in_footer' => true,
+				'strategy'  => 'defer',
 			)
 		);
-		register_rest_route(
-			'bwpn',
-			'/v1/push/users/(?P<user_id>[a-zA-Z0-9-]+)/unregister',
-			array(
-				'methods'             => array( 'POST' ),
-				'callback'            => array( $users, 'unregister' ),
-				'permission_callback' => '__return_true',
-				'args'                => array( 'user_id' => array() ),
-			)
-		);
-		register_rest_route(
-			'bwpn',
-			'/v1/push/users/(?P<user_id>[a-zA-Z0-9-]+)',
-			array(
-				'methods'             => array( 'GET' ),
-				'callback'            => array( $users, 'get_user' ),
-				'permission_callback' => '__return_true',
-				'args'                => array( 'user_id' => array() ),
-			)
+		wp_add_inline_script(
+			self::HANDLE,
+			'window.BWPNOptions = ' . wp_json_encode( self::config(), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP ) . ';',
+			'before'
 		);
 	}
 }

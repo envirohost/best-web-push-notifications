@@ -85,6 +85,7 @@ final class BWPN_Plugin {
 		BWPN_Lib_Log::bootstrap();
 
 		add_action( 'init', array( $this, 'load_textdomain' ) );
+		add_filter( 'map_meta_cap', array( __CLASS__, 'map_meta_cap' ), 10, 2 );
 		add_action( 'plugins_loaded', array( 'BWPN_Upgrader', 'maybe_upgrade' ) );
 
 		BWPN_Cron::register_hooks();
@@ -103,6 +104,29 @@ final class BWPN_Plugin {
 		if ( defined( 'WP_CLI' ) && WP_CLI && class_exists( 'WP_CLI' ) ) {
 			WP_CLI::add_command( 'bwpn', 'BWPN_CLI' );
 		}
+	}
+
+	/**
+	 * Maps the plugin capabilities to core ones, so no role is modified:
+	 * bwpn_send_notifications -> publish_posts, bwpn_manage -> manage_options.
+	 *
+	 * @param string[] $caps Primitive caps.
+	 * @param string   $cap  Requested cap.
+	 * @return string[]
+	 */
+	public static function map_meta_cap( $caps, $cap ) {
+		if ( 'bwpn_send_notifications' === $cap ) {
+			/**
+			 * Filters the core capability required to send notifications.
+			 *
+			 * @param string $required Capability.
+			 */
+			return array( (string) apply_filters( 'bwpn_send_capability', 'publish_posts' ) );
+		}
+		if ( 'bwpn_manage' === $cap ) {
+			return array( 'manage_options' );
+		}
+		return $caps;
 	}
 
 	/**
