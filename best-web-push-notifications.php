@@ -12,18 +12,18 @@
  *
  * @wordpress-plugin
  * Plugin Name:       Best Web Push Notifications
- * Plugin URI:        https://github.com/__GITHUB_OWNER__/best-web-push-notifications
+ * Plugin URI:        https://github.com/envirohost/best-web-push-notifications
  * Description:       Self-hosted web push notifications. VAPID keys and subscribers stay on your own server - no SaaS. Forked from Perfecty Push Notifications by Rowinson Gallego (Perfecty).
  * Version:           2.0.0
  * Requires at least: 6.6
  * Requires PHP:      8.2
  * Author:            Best Web Push Notifications contributors
- * Author URI:        https://github.com/__GITHUB_OWNER__/best-web-push-notifications
+ * Author URI:        https://github.com/envirohost/best-web-push-notifications
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       best-web-push-notifications
  * Domain Path:       /languages
- * Update URI:        https://github.com/__GITHUB_OWNER__/best-web-push-notifications
+ * Update URI:        https://github.com/envirohost/best-web-push-notifications
  */
 
 if ( ! defined( 'ABSPATH' ) ) {

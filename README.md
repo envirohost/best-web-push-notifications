@@ -47,7 +47,7 @@ scheduled but never delivered.
 ## Quick start (development)
 
 ```
-git clone <repo> best-web-push-notifications
+git clone https://github.com/envirohost/best-web-push-notifications.git
 cd best-web-push-notifications
 composer install
 ```

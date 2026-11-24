@@ -6,7 +6,7 @@ Requirements: PHP 8.2+ with `openssl`, `mbstring`, `json`; Composer 2;
 Node 20+ for the SDK; MySQL/MariaDB for tests.
 
 ```
-git clone <repo> best-web-push-notifications
+git clone https://github.com/envirohost/best-web-push-notifications.git
 cd best-web-push-notifications
 composer install          # also runs Strauss -> vendor-prefixed/
 ```

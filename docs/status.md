@@ -61,14 +61,14 @@ import through the admin upload form.
    migrator, transfer); add `phpcs.xml.dist` (WPCS 3.4) and `phpstan.neon.dist`.
 3. **Docs and repo files**: README.txt (wp.org format), CONTRIBUTING,
    SECURITY, issue/PR templates, GitHub Actions (update `tests.yml`).
-4. **Release**: replace `__GITHUB_OWNER__` in the plugin header, build the
+4. **Release**: replace `envirohost` in the plugin header, build the
    v2.0.0 zip (with `vendor-prefixed/` and built SDK, without `vendor/`,
    `sdk/node_modules`, tests), create the public repo under Michael's personal
    GitHub account, push, tag, release; manual browser checklist.
 
 ## Known gaps and decisions
 
-- Plugin header still has the `__GITHUB_OWNER__` placeholder.
+- Plugin header still has the `envirohost` placeholder.
 - Old upstream tests in `tests/` target the removed API and will fail.
 - `.github/workflows/tests.yml` is upstream's and not updated.
 - README.txt is still upstream's text.
