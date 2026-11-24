@@ -62,7 +62,7 @@ wp bwpn send "Hello from WP-CLI" --url=https://example.com/ --now
 
 ## Licence and credits
 
-- Plugin: GPL-2.0-or-later ([LICENSE.txt](LICENSE.txt)).
+- Plugin: GPL-2.0-or-later ([LICENSE](LICENSE)).
 - Browser SDK in `sdk/`: MIT ([sdk/LICENSE](sdk/LICENSE)).
 - Based on Perfecty Push Notifications, copyright 2020-2025 Rowinson Gallego.
 - Uses [web-push-php](https://github.com/web-push-libs/web-push-php) (MIT).
